@@ -207,3 +207,9 @@ marimo/_lsp/
 __marimo__/
 *.xvcd
 gello_teleop/src/
+
+# Trained model weights (store large artifacts outside the Git repository)
+model/**/*.pt
+model/**/*.pth
+model/**/*.ckpt
+model/**/*.safetensors

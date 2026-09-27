@@ -151,6 +151,23 @@ python uf_robot_gello_teleop.py --config config/xarm7_gello_teleop.yaml
 
 ## References
 
+## Nero feature migration
+
+The shared collection, dynamics, H5, xArm adapter, and independent π0-WM
+runtime are documented in [MIGRATION_CHECKLIST.md](MIGRATION_CHECKLIST.md).
+The read-only mock collection can be checked without hardware:
+
+```bash
+pip install -r requirements-xarm.txt
+python -m nero_collection.cli --config configs/mock_collection.yaml --backend mock \
+  --dry-run-duration 1 --episode-limit 1 --auto-save
+python scripts/run_pi0_wm.py --mock --mock-wm --steps 260
+```
+
+The xArm SDK path is read-only until an endpoint explicitly sets
+`execution_enabled: true`; the SDK does not provide a verified Nero/MIT joint
+torque command. See the checklist for hardware fields and validation limits.
+
 - [Agilex Robotics Pika Sense](https://global.agilex.ai/products/pika)
 - [UFACTORY Robotic Arms](https://www.ufactory.cc/xarm-collaborative-robot/)
 - [LuMos FastUMI](https://www.fastumi.com/)

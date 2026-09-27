@@ -1,0 +1,7 @@
+# Independent π0-WM edge client (server owns model transforms).
+-r requirements-xarm.txt
+websockets>=15,<16
+msgpack>=1,<2
+# Install the official openpi-client source package separately in its server
+# compatible environment; it has a NumPy constraint that may differ from the
+# robot collection environment.

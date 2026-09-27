@@ -1,0 +1,138 @@
+# Three-service xArm/Gello collection configuration.
+services:
+  xarm_rpc: tcp://127.0.0.1:5551
+  xarm_state: tcp://127.0.0.1:5552
+  gello_rpc: tcp://127.0.0.1:5561
+  gello_state: tcp://127.0.0.1:5562
+  gripper_rpc: tcp://127.0.0.1:5571
+  gripper_state: tcp://127.0.0.1:5572
+  xarm_state_hz: 100
+  gello_state_hz: 100
+  gripper_state_hz: 25
+
+startup:
+  reset_samples: 5
+  reset_error_rad: 0.05
+  reset_timeout_s: 30.0
+  xarm_rate_hz: 30
+  xarm_max_step_rad: 0.03
+  gello_duration_s: 4.0
+  gello_rate_hz: 100
+  require_feedback: false
+
+xarm:
+  name: xarm
+  robot_ip: 192.168.1.XXX
+  dof: 7
+  # Read-only by default. Set true only after a manual safety check.
+  execution_enabled: false
+  feedback_signal: none
+  gripper_open_position: 800
+  gripper_close_position: 0
+  gripper_min_width_m: 0.0
+  gripper_max_width_m: 0.085
+  servo_mode: 1
+  joint_speed_rad_s: 0.8
+  joint_acc_rad_s2: 3.0
+  allow_impedance_position_fallback: false
+  rest_q: [0.0, -0.55, 0.0, 1.25, 0.0, 0.80, 0.0]
+
+gello:
+  port: /dev/serial/by-id/REPLACE_GELLO_SERIAL
+  baudrate: 4000000
+  joint_ids: [1, 2, 3, 4, 5, 6, 7]
+  servo_types: [XM430-W210-T, XM430-W210-T, XM430-W210-T, XM430-W210-T, XM430-W210-T, XM430-W210-T, XM430-W210-T]
+  rest_q: [0.0, -0.55, 0.0, 1.25, 0.0, 0.80, 0.0]
+  joint_signs: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+  position_scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+  max_torque: 0.5
+  reset_kp: 3.0
+  reset_kd: 0.08
+
+gripper:
+  backend: xarm
+  robot_ip: 192.168.1.XXX
+  # Read-only by default; enabling this permits gripper motion at startup.
+  execution_enabled: false
+  reset_value: 0.0
+  min_width_m: 0.0
+  max_width_m: 0.085
+  open_position: 800
+  close_position: 0
+  force_n: 3.0
+
+collection:
+  sample_rate_hz: 100
+  max_step_rad: 0.08
+
+force_feedback:
+  # Keep disabled until each joint direction is calibrated on the real setup.
+  enabled: false
+  source: torque
+  gain: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  sign: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+  bias_nm: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  deadband_nm: [0.1, 0.1, 0.1, 0.1, 0.05, 0.05, 0.05]
+  limit_nm: [0.4, 0.4, 0.3, 0.3, 0.2, 0.2, 0.2]
+  rate_limit_nm_s: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+  lowpass_hz: 5.0
+  ramp_s: 2.0
+
+teleop:
+  mode: master_slave
+  protocol: zmq
+  backend: xarm
+  master_slave:
+    arm_pairs:
+      - name: arm
+        leader:
+          name: gello
+          rest_q: [0.0, -0.55, 0.0, 1.25, 0.0, 0.80, 0.0]
+        follower:
+          name: xarm
+          rest_q: [0.0, -0.55, 0.0, 1.25, 0.0, 0.80, 0.0]
+  command:
+    sample_rate_hz: 100
+    control_watchdog_timeout_s: 0.05
+    control_mode: position
+    reset_test_sample_time: 5
+    reset_error_limit_rad: 0.05
+
+output:
+  directory: runs/xarm_gello
+  prefix: episode
+  discard_initial_s: 2.0
+
+cameras:
+  - name: wrist
+    enabled: true
+    backend: realsense
+    serial_number: "REPLACE_D405_SERIAL"
+    depth: false
+    width: 640
+    height: 480
+    fps: 30
+    output_size: [256, 192]
+  - name: side
+    enabled: true
+    backend: realsense
+    serial_number: "REPLACE_D435I_SERIAL"
+    depth: false
+    width: 640
+    height: 480
+    fps: 30
+    output_size: [256, 192]
+
+robot_states:
+  q: {enabled: true}
+  velocity: {enabled: true}
+  ee_pose: {enabled: true}
+  torque: {enabled: true}
+  current: {enabled: true}
+
+tau_ext_inference:
+  enabled: false
+dynamics_processing:
+  enabled: false
+realtime_plot:
+  enabled: false

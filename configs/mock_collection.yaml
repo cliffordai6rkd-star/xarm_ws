@@ -1,0 +1,42 @@
+teleop:
+  mode: master_slave
+  protocol: zmq
+  backend: mock
+  master_slave:
+    arm_pairs:
+      - name: mock_arm
+        leader:
+          name: mock_leader
+          rest_q: [0, 0, 0, 0, 0, 0, 0]
+          config_kwargs: {dof: 7}
+        follower:
+          name: mock_follower
+          rest_q: [0, 0, 0, 0, 0, 0, 0]
+          config_kwargs: {dof: 7}
+  command:
+    sample_rate_hz: 50
+    control_watchdog_timeout_s: 0.05
+    control_mode: position
+    reset_after_episode: false
+    reset_on_start: false
+    bilateral_mit:
+      position_scale: [1, 1, 1, 1, 1, 1, 1]
+gripper:
+  enabled: false
+output:
+  directory: runs/mock
+  prefix: episode
+  discard_initial_s: 0
+cameras: []
+robot_states:
+  q: true
+  velocity: true
+  ee_pose: true
+  torque: true
+  current: false
+tau_ext_inference:
+  enabled: false
+dynamics_processing:
+  enabled: false
+realtime_plot:
+  enabled: false

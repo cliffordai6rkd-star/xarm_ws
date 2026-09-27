@@ -1,0 +1,14 @@
+# Base xArm collection, mock, H5 and headless FK tooling.
+numpy>=1.23,<3
+scipy>=1.10
+PyYAML>=6
+h5py>=3.11
+
+# Optional hardware / visualization groups:
+# xArm-Python-SDK>=1.14
+# opencv-python>=4.8
+# pyrealsense2
+# mujoco>=3.1
+# rerun-sdk
+# pyzmq>=25
+# lerobot==0.4.0  # optional DP checkpoint backend

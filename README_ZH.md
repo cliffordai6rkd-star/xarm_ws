@@ -152,6 +152,20 @@ python uf_robot_gello_teleop.py --config config/xarm7_gello_teleop.yaml
 
 ## 参考资料
 
+## Nero 功能迁移
+
+统一数采、动力学、H5、xArm 适配层和独立 π0-WM 运行时见
+[MIGRATION_CHECKLIST.md](MIGRATION_CHECKLIST.md)。无硬件 mock 验证：
+
+```bash
+pip install -r requirements-xarm.txt
+python -m nero_collection.cli --config configs/mock_collection.yaml --backend mock \
+  --dry-run-duration 1 --episode-limit 1 --auto-save
+python scripts/run_pi0_wm.py --mock --mock-wm --steps 260
+```
+
+xArm SDK 默认只读；只有 endpoint 显式设置 `execution_enabled: true` 后才允许使能和位置下发。SDK 没有经核实的 Nero/MIT 关节力矩接口。硬件字段、模型契约和未验证范围请以迁移清单为准。
+
 - [Agilex Robotics Pika Sense](https://global.agilex.ai/products/pika)
 - [UFACTORY 协作机械臂](https://www.ufactory.cc/xarm-collaborative-robot/)
 - [LuMos FastUMI](https://www.fastumi.com/)

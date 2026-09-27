@@ -1,0 +1,28 @@
+{
+  "dataset_root": "/opt/lcx/data/demostrate/insert_usb_lerobotv3",
+  "predecoded_cache": null,
+  "video_backend": "torchcodec",
+  "dataset_repo_id": "insert_usb_lerobotv3",
+  "lerobot_policy": "diffusion",
+  "batch_size": 64,
+  "steps": 200000,
+  "save_freq": 10000,
+  "num_workers": 64,
+  "prefetch_factor": 2,
+  "seed": 42,
+  "ema": true,
+  "ema_decay": 0.9999,
+  "use_amp": true,
+  "device": "cuda:0 via CUDA_VISIBLE_DEVICES=0",
+  "raw_features_used": [
+    "observation.images.wrist",
+    "observation.images.side",
+    "observation.joint",
+    "action.joint"
+  ],
+  "in_memory_mapping": {
+    "observation.joint": "observation.state",
+    "action.joint": "action",
+    "action.joint_is_pad": "action_is_pad"
+  }
+}
