@@ -59,14 +59,24 @@ class UFRobotConfig:
     gripper_force: int = -1     # auto
     start_joints: Tuple[float, ...] = (0, 0, 0, np.pi/2, 0, np.pi/2, 0)
     start_tcp_pose: Tuple[float, ...] = None # xyzrpy
+    # Optional values used by the checked GELLO reset path.  They are kept
+    # here so a YAML RobotConfig can be passed through this legacy adapter.
+    reset_q: Tuple[float, ...] = None
+    reset_speed: float = 10
+    reset_acc: float = 50
+    reset_timeout: float = 60
+    reset_tolerance: float = 0.03
+    command_timeout: float = 0.5
+    collision_sensitivity: int = None
 
 
 class UFRobot(object):
-    def __init__(self, config: UFRobotConfig):
+    def __init__(self, config: UFRobotConfig, initialize: bool = True):
         self.config = config
 
         self._start_tcp_pose = self.config.start_tcp_pose
-        self._start_joints = self.config.start_joints
+        self._start_joints = (self.config.reset_q if self.config.reset_q is not None
+                              else self.config.start_joints)
         self._cmd_cnt = 0
 
         self._joint_speed = math.radians(self.config.robot_speed) if self.config.robot_mode == 6 else math.radians(90)
@@ -103,9 +113,9 @@ class UFRobot(object):
             self._gripper_param = GripperParam('NoGripper', open_pos=0, close_pos=0, speed=0, force=0)
         
         self.real_arm: XArmAPI
-        self.connect()
+        self.connect(initialize=initialize)
     
-    def connect(self):
+    def connect(self, initialize: bool = True):
         self.real_arm = XArmAPI(self.config.robot_ip)
 
         time.sleep(0.2)
@@ -119,11 +129,13 @@ class UFRobot(object):
         #         print('Could not connect to pika gripper.')
         #         raise ConnectionError()
 
-        self.real_arm.motion_enable()
+        if not initialize:
+            return
         self.real_arm.clean_error()
         self.real_arm.set_mode(0)  # set to idle mode
         self.real_arm.set_state(0)  # set to start state
         time.sleep(0.5)
+        self.real_arm.motion_enable()
         if self._start_tcp_pose is None:
             self.real_arm.set_servo_angle(angle=self._start_joints, is_radian=True, wait=True)
         else:
@@ -179,8 +191,7 @@ class UFRobot(object):
                 if init_gripper_pose:
                     self.real_arm.robotiq_set_position(self._gripper_param.open_pos, wait=True)
             if init_gripper_pose:
-                self._gripper_param.grippos = self._gripper_param.open_pos
-                self._gripper_param.gripper_norm = self._gripper_param.open_pos
+                self._gripper_param.gripper_norm = 0.0
             self.real_arm._arm._baud_checkset = False   
             _, err_warn = self.real_arm.get_err_warn_code()
             if err_warn[0] != 0:

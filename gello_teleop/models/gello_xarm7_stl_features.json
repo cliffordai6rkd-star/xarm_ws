@@ -1,0 +1,1744 @@
+{
+  "units": "raw STL millimetres",
+  "method": "Smooth-face adjacency, normal SVD, projected least-squares circle fits; radii and residuals in mm. Axis sign is canonical, not motor positive direction.",
+  "features": {
+    "L1.STL": [
+      {
+        "center_raw": [
+          -8.0,
+          3.65,
+          63.5
+        ],
+        "axis": [
+          -0.0,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 2.3,
+        "residual_raw": 2.9398565746241445e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          8.0,
+          3.65,
+          33.5
+        ],
+        "axis": [
+          -0.0,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 2.3,
+        "residual_raw": 2.9289183627323467e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -8.0,
+          3.65,
+          33.5
+        ],
+        "axis": [
+          -0.0,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 2.3,
+        "residual_raw": 2.9289189686920736e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          8.0,
+          3.65,
+          63.5
+        ],
+        "axis": [
+          -0.0,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 2.3,
+        "residual_raw": 2.9398559773241573e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          0.0,
+          -12.0,
+          4.75
+        ],
+        "axis": [
+          0.0,
+          -0.0,
+          1.0
+        ],
+        "radius_raw": 1.1,
+        "length_raw": 4.5,
+        "residual_raw": 5.402538310050886e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -0.0,
+          0.0,
+          4.75
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "radius_raw": 1.1,
+        "length_raw": 4.5,
+        "residual_raw": 3.1967265723409355e-08,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          6.0,
+          -6.0,
+          4.75
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "radius_raw": 1.1,
+        "length_raw": 4.5,
+        "residual_raw": 3.5324022307214875e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -6.0,
+          -6.0,
+          4.75
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "radius_raw": 1.1,
+        "length_raw": 4.5,
+        "residual_raw": 3.5324021419036455e-07,
+        "faces": 72
+      }
+    ],
+    "L2.STL": [
+      {
+        "center_raw": [
+          0.0,
+          25.25,
+          -89.0
+        ],
+        "axis": [
+          -0.0,
+          1.0,
+          0.0
+        ],
+        "radius_raw": 8.25,
+        "length_raw": 2.5,
+        "residual_raw": 3.1583662103429333e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          8.0,
+          32.5,
+          -10.85
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 2.3,
+        "residual_raw": 1.8173802494025892e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          8.0,
+          2.5,
+          -10.85
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 2.3,
+        "residual_raw": 2.620130861163972e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -8.0,
+          2.5,
+          -10.85
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 2.3,
+        "residual_raw": 2.6201309388795835e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -8.0,
+          32.5,
+          -10.85
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 2.3,
+        "residual_raw": 1.8173804872123611e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          0.0,
+          28.0,
+          -83.0
+        ],
+        "axis": [
+          -0.0,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 3.0,
+        "residual_raw": 5.70974507896338e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          6.0,
+          28.0,
+          -89.0
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 3.0,
+        "residual_raw": 3.3062017583684877e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          0.0,
+          28.0,
+          -95.0
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 3.0,
+        "residual_raw": 4.687087017174463e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -6.0,
+          28.0,
+          -89.0
+        ],
+        "axis": [
+          -0.0,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 3.0,
+        "residual_raw": 3.3062005921902227e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          0.0,
+          22.51405,
+          -42.20804
+        ],
+        "axis": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "radius_raw": 2.5,
+        "length_raw": 11.0,
+        "residual_raw": 2.320127354238366e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -6.0,
+          34.5,
+          -89.0
+        ],
+        "axis": [
+          -0.0,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 3.0,
+        "length_raw": 10.0,
+        "residual_raw": 4.988282116702436e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          0.0,
+          34.5,
+          -95.0
+        ],
+        "axis": [
+          -0.0,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 3.0,
+        "length_raw": 10.0,
+        "residual_raw": 3.000316672441272e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          6.0,
+          34.5,
+          -89.0
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "radius_raw": 3.0,
+        "length_raw": 10.0,
+        "residual_raw": 4.988281193885058e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          0.0,
+          34.5,
+          -83.0
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 3.0,
+        "length_raw": 10.0,
+        "residual_raw": 5.773693090738163e-06,
+        "faces": 72
+      }
+    ],
+    "L3.STL": [
+      {
+        "center_raw": [
+          -0.0,
+          -6.0,
+          4.25
+        ],
+        "axis": [
+          -0.0,
+          0.0,
+          1.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 3.5,
+        "residual_raw": 2.432119259321297e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          6.0,
+          -0.0,
+          4.25
+        ],
+        "axis": [
+          0.0,
+          -0.0,
+          1.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 3.5,
+        "residual_raw": 2.4321193325960166e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -6.0,
+          0.0,
+          4.25
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 3.5,
+        "residual_raw": 2.432119343698247e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          0.0,
+          6.0,
+          4.25
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 3.5,
+        "residual_raw": 2.432119516893039e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          17.25,
+          0.81436,
+          28.26577
+        ],
+        "axis": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 2.3,
+        "residual_raw": 1.2107874516331663e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          17.25,
+          14.87543,
+          20.63123
+        ],
+        "axis": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 2.3,
+        "residual_raw": 1.3990789033968554e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          17.25,
+          15.12912,
+          54.63028
+        ],
+        "axis": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 2.3,
+        "residual_raw": 2.1413576190010275e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          17.25,
+          29.19019,
+          46.99574
+        ],
+        "axis": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 2.3,
+        "residual_raw": 2.632244316291832e-06,
+        "faces": 72
+      }
+    ],
+    "L4.STL": [
+      {
+        "center_raw": [
+          -13.75,
+          10.0,
+          0.0
+        ],
+        "axis": [
+          1.0,
+          -0.0,
+          0.0
+        ],
+        "radius_raw": 8.25,
+        "length_raw": 2.5,
+        "residual_raw": 6.414921838171495e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -10.75,
+          4.0,
+          0.0
+        ],
+        "axis": [
+          1.0,
+          -0.0,
+          0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 3.5,
+        "residual_raw": 2.554657829723084e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -10.75,
+          10.0,
+          -6.0
+        ],
+        "axis": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 3.5,
+        "residual_raw": 6.011194664257147e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -10.75,
+          10.0,
+          6.0
+        ],
+        "axis": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 3.5,
+        "residual_raw": 6.011194593202873e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -10.75,
+          16.0,
+          0.0
+        ],
+        "axis": [
+          1.0,
+          -0.0,
+          0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 3.5,
+        "residual_raw": 7.057285837941407e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -56.5,
+          59.68688,
+          -37.01835
+        ],
+        "axis": [
+          0.0,
+          0.731354,
+          -0.681998
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 2.30001,
+        "residual_raw": 3.972733233936765e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -40.5,
+          59.68688,
+          -37.01835
+        ],
+        "axis": [
+          0.0,
+          0.731354,
+          -0.681998
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 2.30001,
+        "residual_raw": 3.7444553566690075e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -56.5,
+          80.14683,
+          -15.07774
+        ],
+        "axis": [
+          0.0,
+          0.731354,
+          -0.681998
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 2.30001,
+        "residual_raw": 5.379178053210865e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -40.5,
+          80.14683,
+          -15.07774
+        ],
+        "axis": [
+          0.0,
+          0.731354,
+          -0.681998
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 2.30001,
+        "residual_raw": 4.098506496408305e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -33.75,
+          52.33721,
+          -0.0
+        ],
+        "axis": [
+          1.0,
+          0.0,
+          -0.0
+        ],
+        "radius_raw": 9.0,
+        "length_raw": 49.5,
+        "residual_raw": 1.9308498533376905e-06,
+        "faces": 72
+      }
+    ],
+    "L5.STL": [
+      {
+        "center_raw": [
+          20.85,
+          -7.5,
+          -8.0
+        ],
+        "axis": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 2.3,
+        "residual_raw": 3.837888973290404e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          20.85,
+          22.5,
+          -8.0
+        ],
+        "axis": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "radius_raw": 1.24674,
+        "length_raw": 2.3,
+        "residual_raw": 1.1436243934070944e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          20.85,
+          22.5,
+          8.0
+        ],
+        "axis": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "radius_raw": 1.24674,
+        "length_raw": 2.3,
+        "residual_raw": 1.143624465571591e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          20.85,
+          -7.5,
+          8.0
+        ],
+        "axis": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 2.3,
+        "residual_raw": 3.837888913338361e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -5.0,
+          82.0,
+          0.0
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 3.5,
+        "residual_raw": 2.560784557736895e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          1.0,
+          82.0,
+          6.0
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 3.5,
+        "residual_raw": 2.3620266786927857e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          7.0,
+          82.0,
+          0.0
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 3.5,
+        "residual_raw": 5.269294398591029e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          1.0,
+          82.0,
+          -6.0
+        ],
+        "axis": [
+          -0.0,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 3.5,
+        "residual_raw": 2.3620266853541239e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          20.85,
+          65.1382,
+          -0.0
+        ],
+        "axis": [
+          1.0,
+          -0.0,
+          0.0
+        ],
+        "radius_raw": 2.5,
+        "length_raw": 2.3,
+        "residual_raw": 4.309792295931203e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          20.85,
+          40.48289,
+          -0.0
+        ],
+        "axis": [
+          1.0,
+          -0.0,
+          -0.0
+        ],
+        "radius_raw": 7.5,
+        "length_raw": 2.3,
+        "residual_raw": 2.8438185903922886e-06,
+        "faces": 72
+      }
+    ],
+    "L6.STL": [
+      {
+        "center_raw": [
+          1.25,
+          15.0,
+          -15.0
+        ],
+        "axis": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "radius_raw": 8.25,
+        "length_raw": 2.5,
+        "residual_raw": 1.1233838836943733e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          3.75,
+          15.0,
+          -21.0
+        ],
+        "axis": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 2.5,
+        "residual_raw": 1.2042407799839339e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          3.75,
+          9.0,
+          -15.0
+        ],
+        "axis": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 2.5,
+        "residual_raw": 8.283468322378695e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          3.75,
+          15.0,
+          -9.0
+        ],
+        "axis": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 2.5,
+        "residual_raw": 8.283468027059371e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          3.75,
+          21.0,
+          -15.0
+        ],
+        "axis": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 2.5,
+        "residual_raw": 1.2042408465973153e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -5.5,
+          -15.15,
+          0.82438
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 2.3,
+        "residual_raw": 2.4649381114016933e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          10.5,
+          -15.15,
+          0.82438
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 2.3,
+        "residual_raw": 5.246626670896148e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          10.5,
+          -15.15,
+          30.82438
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 2.3,
+        "residual_raw": 3.2439269097572776e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -5.5,
+          -15.15,
+          30.82438
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "radius_raw": 1.25,
+        "length_raw": 2.3,
+        "residual_raw": 3.266392099243731e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          2.5,
+          -5.21642,
+          4.80014
+        ],
+        "axis": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "radius_raw": 3.2492,
+        "length_raw": 5.0,
+        "residual_raw": 5.642052234300365e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          2.5,
+          5.08887,
+          -4.42555
+        ],
+        "axis": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "radius_raw": 2.55179,
+        "length_raw": 5.0,
+        "residual_raw": 3.4295581308185774e-07,
+        "faces": 72
+      }
+    ],
+    "base.STL": [
+      {
+        "center_raw": [
+          -70.00047,
+          7.62201,
+          0.0
+        ],
+        "axis": [
+          0.000366,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 9.00042,
+        "length_raw": 5.00084,
+        "residual_raw": 0.0010035083815083112,
+        "faces": 19
+      },
+      {
+        "center_raw": [
+          -47.5,
+          8.85,
+          8.0
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "radius_raw": 1.2,
+        "length_raw": 2.3,
+        "residual_raw": 3.0536088497790104e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -47.5,
+          3.85,
+          8.0
+        ],
+        "axis": [
+          -0.0,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 2.5,
+        "length_raw": 7.7,
+        "residual_raw": 2.4539877538920507e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -77.49998,
+          3.73291,
+          7.99999
+        ],
+        "axis": [
+          6.8e-05,
+          1.0,
+          -0.000191
+        ],
+        "radius_raw": 2.50002,
+        "length_raw": 7.70101,
+        "residual_raw": 0.0008314025942088854,
+        "faces": 76
+      },
+      {
+        "center_raw": [
+          -77.5,
+          8.85,
+          8.0
+        ],
+        "axis": [
+          -0.0,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 1.2,
+        "length_raw": 2.3,
+        "residual_raw": 4.4495428517254965e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -77.5,
+          3.7329,
+          -7.99999
+        ],
+        "axis": [
+          5.7e-05,
+          1.0,
+          3e-05
+        ],
+        "radius_raw": 2.50001,
+        "length_raw": 7.70032,
+        "residual_raw": 0.0002608791258249532,
+        "faces": 76
+      },
+      {
+        "center_raw": [
+          -77.5,
+          8.85,
+          -8.0
+        ],
+        "axis": [
+          -0.0,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 1.2,
+        "length_raw": 2.3,
+        "residual_raw": 4.4495432411917335e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -47.5,
+          8.85,
+          -8.0
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "radius_raw": 1.2,
+        "length_raw": 2.3,
+        "residual_raw": 3.0536081574439322e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -47.5,
+          3.85,
+          -8.0
+        ],
+        "axis": [
+          -0.0,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 2.5,
+        "length_raw": 7.7,
+        "residual_raw": 2.4539870251416573e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -20.0,
+          5.0,
+          -31.5
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "radius_raw": 1.7,
+        "length_raw": 10.0,
+        "residual_raw": 1.523907955380821e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          4.0,
+          5.0,
+          -31.5
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "radius_raw": 1.7,
+        "length_raw": 10.0,
+        "residual_raw": 1.610897177872772e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          28.0,
+          5.0,
+          -31.5
+        ],
+        "axis": [
+          -0.0,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 1.7,
+        "length_raw": 10.0,
+        "residual_raw": 1.5642653221625835e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          52.0,
+          5.0,
+          -31.5
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "radius_raw": 1.7,
+        "length_raw": 10.0,
+        "residual_raw": 2.191795622774606e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          76.0,
+          5.0,
+          -31.5
+        ],
+        "axis": [
+          -0.0,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 1.7,
+        "length_raw": 10.0,
+        "residual_raw": 4.995798196238965e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          4.0,
+          5.0,
+          -10.5
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "radius_raw": 1.7,
+        "length_raw": 10.0,
+        "residual_raw": 4.104807653781961e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          28.0,
+          5.0,
+          -10.5
+        ],
+        "axis": [
+          -0.0,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 1.7,
+        "length_raw": 10.0,
+        "residual_raw": 1.5882051827009747e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          52.0,
+          5.0,
+          -10.5
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "radius_raw": 1.7,
+        "length_raw": 10.0,
+        "residual_raw": 1.6366253181576695e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          76.0,
+          5.0,
+          -10.5
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "radius_raw": 1.7,
+        "length_raw": 10.0,
+        "residual_raw": 4.463225556028405e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          4.0,
+          5.0,
+          10.5
+        ],
+        "axis": [
+          -0.0,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 1.7,
+        "length_raw": 10.0,
+        "residual_raw": 4.104807294069701e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          28.0,
+          5.0,
+          10.5
+        ],
+        "axis": [
+          -0.0,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 1.7,
+        "length_raw": 10.0,
+        "residual_raw": 1.5882050368176692e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          52.0,
+          5.0,
+          10.5
+        ],
+        "axis": [
+          -0.0,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 1.7,
+        "length_raw": 10.0,
+        "residual_raw": 1.6366255948252473e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          76.0,
+          5.0,
+          10.5
+        ],
+        "axis": [
+          -0.0,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 1.7,
+        "length_raw": 10.0,
+        "residual_raw": 4.463226085604788e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          4.0,
+          5.0,
+          31.5
+        ],
+        "axis": [
+          -0.0,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 1.7,
+        "length_raw": 10.0,
+        "residual_raw": 1.6108966904848643e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          28.0,
+          5.0,
+          31.5
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "radius_raw": 1.7,
+        "length_raw": 10.0,
+        "residual_raw": 1.5642653128367101e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          52.0,
+          5.0,
+          31.5
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "radius_raw": 1.7,
+        "length_raw": 10.0,
+        "residual_raw": 2.191797139783347e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          76.0,
+          5.0,
+          31.5
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "radius_raw": 1.7,
+        "length_raw": 10.0,
+        "residual_raw": 4.995797428852811e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -20.0,
+          5.0,
+          -10.5
+        ],
+        "axis": [
+          -0.0,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 1.7,
+        "length_raw": 10.0,
+        "residual_raw": 1.170941505312939e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -20.0,
+          5.0,
+          10.5
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "radius_raw": 1.7,
+        "length_raw": 10.0,
+        "residual_raw": 1.170941210881793e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -20.0,
+          5.0,
+          31.5
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "radius_raw": 1.7,
+        "length_raw": 10.0,
+        "residual_raw": 1.5239079189655058e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -92.5,
+          5.0,
+          -32.5
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "radius_raw": 3.25,
+        "length_raw": 10.0,
+        "residual_raw": 4.744672612577716e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          92.5,
+          5.0,
+          -32.5
+        ],
+        "axis": [
+          -0.0,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 3.25,
+        "length_raw": 10.0,
+        "residual_raw": 4.744671930900779e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          92.5,
+          5.0,
+          32.5
+        ],
+        "axis": [
+          -0.0,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 3.25,
+        "length_raw": 10.0,
+        "residual_raw": 4.744672133849548e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -92.5,
+          5.0,
+          32.5
+        ],
+        "axis": [
+          -0.0,
+          1.0,
+          -0.0
+        ],
+        "radius_raw": 3.25,
+        "length_raw": 10.0,
+        "residual_raw": 4.744672499779057e-06,
+        "faces": 72
+      }
+    ],
+    "handle.STL": [
+      {
+        "center_raw": [
+          -21.07322,
+          -5.31631,
+          18.55
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "radius_raw": 1.175,
+        "length_raw": 1.1,
+        "residual_raw": 1.5706369453916125e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -21.07322,
+          10.68369,
+          18.55
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "radius_raw": 1.175,
+        "length_raw": 1.1,
+        "residual_raw": 1.6296653992942112e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          8.92678,
+          -5.31631,
+          18.55
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "radius_raw": 1.175,
+        "length_raw": 1.1,
+        "residual_raw": 6.855506260450284e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          8.92678,
+          -5.31631,
+          20.05
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "radius_raw": 2.0,
+        "length_raw": 1.9,
+        "residual_raw": 5.35979041149659e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -21.07322,
+          10.68369,
+          20.13111
+        ],
+        "axis": [
+          -5e-06,
+          0.000825,
+          1.0
+        ],
+        "radius_raw": 1.99996,
+        "length_raw": 1.90248,
+        "residual_raw": 0.0008911317259543416,
+        "faces": 82
+      },
+      {
+        "center_raw": [
+          -21.07322,
+          -5.31631,
+          20.05
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "radius_raw": 2.0,
+        "length_raw": 1.9,
+        "residual_raw": 1.4155045970909441e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -15.27189,
+          -19.49378,
+          -6.0
+        ],
+        "axis": [
+          0.052336,
+          0.99863,
+          -0.0
+        ],
+        "radius_raw": 1.175,
+        "length_raw": 2.9,
+        "residual_raw": 1.626558477685336e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -9.28012,
+          -19.80779,
+          -0.0
+        ],
+        "axis": [
+          0.052336,
+          0.99863,
+          0.0
+        ],
+        "radius_raw": 1.175,
+        "length_raw": 2.9,
+        "residual_raw": 5.8746857090064e-07,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -21.26367,
+          -19.17976,
+          -0.0
+        ],
+        "axis": [
+          0.052336,
+          0.99863,
+          -0.0
+        ],
+        "radius_raw": 1.175,
+        "length_raw": 2.9,
+        "residual_raw": 1.2669055007297203e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -15.27189,
+          -19.49378,
+          6.0
+        ],
+        "axis": [
+          0.052336,
+          0.99863,
+          -0.0
+        ],
+        "radius_raw": 1.175,
+        "length_raw": 2.9,
+        "residual_raw": 1.6265576681107063e-06,
+        "faces": 72
+      },
+      {
+        "center_raw": [
+          -14.89466,
+          -12.29654,
+          6.00002
+        ],
+        "axis": [
+          0.05224,
+          0.998635,
+          3.1e-05
+        ],
+        "radius_raw": 3.00001,
+        "length_raw": 9.90005,
+        "residual_raw": 0.0006215847756370074,
+        "faces": 88
+      },
+      {
+        "center_raw": [
+          -20.89616,
+          -12.16808,
+          2e-05
+        ],
+        "axis": [
+          0.052237,
+          0.998635,
+          3.2e-05
+        ],
+        "radius_raw": 3.00001,
+        "length_raw": 9.5856,
+        "residual_raw": 0.0006230393815709334,
+        "faces": 88
+      },
+      {
+        "center_raw": [
+          -8.89316,
+          -12.425,
+          2e-05
+        ],
+        "axis": [
+          0.052243,
+          0.998634,
+          3e-05
+        ],
+        "radius_raw": 3.00001,
+        "length_raw": 10.21449,
+        "residual_raw": 0.0006197902650928455,
+        "faces": 88
+      }
+    ]
+  },
+  "mesh_sha256": {
+    "xarm7/L4.STL": "50107ff70643f0db844d1f7cd3a309454f45430292867b9868cddf68cf2accb8",
+    "xarm7/L6.STL": "51031f33fcbdec526fe701a2f9ea0ca5f215912d7cc8b8490785eb4f6531b3a5",
+    "xarm7/L2.STL": "b60ca32fc6c7ffa4725a3176a177c891906e908a59d48ef8cd5f7297a7f89739",
+    "xarm7/L3.STL": "a90668c72478fd1a8de3976a9a2b5501cbc9c7bce8ea9f9fbd4deae54d8582d8",
+    "xarm7/base.STL": "14230a3da0000f0d790a262c7cd8034d1095a4b3858f6858bbd519ebd92b77ca",
+    "xarm7/L1.STL": "6d5f8d3ca77e77a7eb773540f9f831ad8b63f9e1235471bf1ed79630f8f0efd6",
+    "xarm7/L5.STL": "9886afe6b61e4f77b67d94e88ba5fc7454c5962a20c4541075626b4ef7671e86",
+    "gripper/handle.STL": "5bd429cce4e99692d406d758cd896bde79b71f4aab8bfed0850dfcd0fe3e91f5"
+  }
+}

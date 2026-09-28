@@ -1,0 +1,193 @@
+left:
+  RobotConfig:
+    robot_ip: 192.168.1.203
+    robot_mode: 6
+    robot_speed: 20
+    robot_acc: 100
+    reset_q: &id001
+    - 0.0
+    - 0.0
+    - 0.0
+    - 1.5707959999999999
+    - 0.0
+    - 1.5707959999999999
+    - 0.0
+    reset_speed: 10
+    reset_acc: 50
+    reset_timeout: 60
+    reset_tolerance: 0.03
+    command_timeout: 0.5
+    collision_sensitivity: null
+    gripper_type: 1
+  TeleoperatorConfig:
+    port: /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTBXAQE9-if00-port0
+    baudrate: 57600
+    joint_ids:
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    joint_signs:
+    - 1
+    - -1
+    - 1
+    - 1
+    - 1
+    - -1
+    - 1
+    gripper_id: 8
+    torque_joint_ids: []
+    fps: 30
+    read_timeout: 0.2
+    watchdog_timeout: 1.0
+    alignment_tolerance: 0.2
+    max_joint_step: 0.5
+    max_joint_velocity: 1
+    gripper_open_deg: null
+    gripper_close_deg: null
+    gripper_travel_deg: -42
+    hold_pwm: 100
+    hold_pwm_by_joint:
+    - 800
+    - 800
+    - 800
+    - 800
+    - 800
+    - 800
+    - 800
+    joint_limits: null
+    control_mode: position
+    dynamics_urdf: ../models/xarm7_dynamics.urdf
+    dynamics_joint_names:
+    - joint1
+    - joint2
+    - joint3
+    - joint4
+    - joint5
+    - joint6
+    - joint7
+    mit_kp: null
+    mit_kd: null
+    mit_torque_limit_nm: null
+    mit_acceleration_limit: 1.0
+    mit_tracking_error_limit: 0.15
+    joint_offsets:
+    - 3.113980999407852
+    - 3.08636934522591
+    - 1.5063691337036997
+    - 1.3453014777706038
+    - 3.017340209771056
+    - 4.781417789044647
+    - 4.720058884324118
+    leader_reference_q:
+    - 3.113980999407852
+    - 3.08636934522591
+    - 1.5063691337036997
+    - 2.9160974777706037
+    - 3.017340209771056
+    - 3.210621789044647
+    - 4.720058884324118
+    leader_passive: false
+    leader_reset_speed_deg: 5.0
+    leader_reset_timeout: 30.0
+    leader_reset_max_travel_deg: 90.0
+    start_joints: *id001
+right:
+  RobotConfig:
+    robot_ip: 192.168.1.196
+    robot_mode: 6
+    robot_speed: 20
+    robot_acc: 100
+    reset_q: &id002
+    - 0.0
+    - 0.0
+    - 0.0
+    - 1.5707959999999999
+    - 0.0
+    - 1.5707959999999999
+    - 0.0
+    reset_speed: 10
+    reset_acc: 50
+    reset_timeout: 60
+    reset_tolerance: 0.03
+    command_timeout: 0.5
+    collision_sensitivity: null
+    gripper_type: 1
+  TeleoperatorConfig:
+    port: /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTBX14YZ-if00-port0
+    baudrate: 57600
+    joint_ids:
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    joint_signs:
+    - 1
+    - -1
+    - 1
+    - 1
+    - 1
+    - -1
+    - 1
+    gripper_id: 8
+    torque_joint_ids: []
+    fps: 100
+    read_timeout: 0.2
+    watchdog_timeout: 1.0
+    alignment_tolerance: 0.2
+    max_joint_step: 0.5
+    max_joint_velocity: 1
+    gripper_open_deg: null
+    gripper_close_deg: null
+    gripper_travel_deg: -42
+    hold_pwm_by_joint:
+    - 800
+    - 800
+    - 800
+    - 800
+    - 800
+    - 800
+    - 800
+    joint_limits: null
+    control_mode: position
+    dynamics_urdf: ../models/xarm7_dynamics.urdf
+    dynamics_joint_names:
+    - joint1
+    - joint2
+    - joint3
+    - joint4
+    - joint5
+    - joint6
+    - joint7
+    mit_kp: null
+    mit_kd: null
+    mit_torque_limit_nm: null
+    mit_acceleration_limit: 1.0
+    mit_tracking_error_limit: 0.15
+    joint_offsets:
+    - 3.115514980195737
+    - 3.1017091531047662
+    - 1.688912847462091
+    - 1.1903694181941542
+    - 3.113980999407852
+    - 4.606543979225684
+    - 4.770680250324344
+    leader_reference_q:
+    - 3.115514980195737
+    - 3.1017091531047662
+    - 1.688912847462091
+    - 2.761165418194154
+    - 3.113980999407852
+    - 3.035747979225684
+    - 4.770680250324344
+    leader_passive: false
+    leader_reset_speed_deg: 5.0
+    leader_reset_timeout: 30.0
+    leader_reset_max_travel_deg: 90.0
+    start_joints: *id002

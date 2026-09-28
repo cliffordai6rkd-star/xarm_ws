@@ -22,7 +22,7 @@ Supported features:
 - Automatic Gello joint offset calculation at startup.
 - Configurable Gello joint mapping through `joint_ids` and `joint_signs`.
 - Optional Gello gripper joint, sent as the last action value.
-- Optional torque mode for unused or locked Dynamixel joints through `torque_joint_ids`.
+- Optional position holding for unmapped Dynamixel joints through `torque_joint_ids`.
 - Unified robot command path through `send_action`; this entry requires `robot_mode: 6`.
 
 ## 2. Environment and Hardware Requirements
@@ -132,7 +132,7 @@ TeleoperatorConfig:
 | `joint_signs` | Direction sign for each Gello joint. Length must match `joint_ids`. For xArm7, the default is all `1` if omitted. |
 | `start_joints` | Robot joint angles corresponding to the Gello startup reference pose, in rad. Length must match `joint_ids`. |
 | `gripper_id` | Gello gripper Dynamixel ID. Set to `-1` to disable the Gello gripper. |
-| `torque_joint_ids` | Dynamixel IDs that should be put into torque mode. This is commonly used for physical Gello joints that are not mapped on xArm5/xArm6 setups. |
+| `torque_joint_ids` | Extra, unmapped Dynamixel IDs held at their current positions in position mode (3). This is not gravity compensation and IDs must not duplicate `joint_ids`. |
 
 ## 5. Gello Pose Alignment
 
@@ -220,4 +220,3 @@ Check:
 - Whether the robot is in an error or emergency stop state.
 - Whether the UFACTORY SDK can control the robot independently.
 - Whether Gello is returning a valid action.
-

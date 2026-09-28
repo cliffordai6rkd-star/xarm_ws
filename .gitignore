@@ -213,3 +213,6 @@ model/**/*.pt
 model/**/*.pth
 model/**/*.ckpt
 model/**/*.safetensors
+
+# GELLO telemetry and local identification results
+gello_teleop/identification_runs/

@@ -1,0 +1,77 @@
+port: /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTBXAQE9-if00-port0
+baudrate: 57600
+joint_ids:
+- 1
+- 2
+- 3
+- 4
+- 5
+- 6
+- 7
+encoder_signs:
+- 1
+- -1
+- 1
+- 1
+- 1
+- -1
+- 1
+encoder_offsets_rad:
+- 3.129320807286708
+- 3.126252845710937
+- 1.4741555371581012
+- 1.196505341345697
+- 3.1492625575292212
+- 4.643359518134939
+- 1.5876701154616386
+joint_coordinates_verified: false
+note: Encoder offsets must define the SAME q=0 as the measured leader URDF. Supply
+  measured mechanical limits, including cable/elastic restrictions. Profile supports
+  velocity-based drive mode, position operating mode 3.
+center_rad:
+- 0.0
+- -0.0
+- 0.0
+- 1.5707959999999999
+- 0.0
+- 1.5707959999999996
+- 0.0
+lower_rad: null
+upper_rad: null
+amplitude_rad:
+- 0.05235987755982989
+- 0.05235987755982989
+- 0.05235987755982989
+- 0.05235987755982989
+- 0.05235987755982989
+- 0.05235987755982989
+- 0.05235987755982989
+duration_s: 60.0
+sample_hz: 8.0
+max_velocity_rad_s: 0.15
+max_acceleration_rad_s2: 0.5
+max_tracking_error_rad: 0.08726646259971647
+start_tolerance_rad: 0.017453292519943295
+max_temperature_c: 50
+min_voltage_v: 3.7
+max_voltage_v: 6.0
+max_current_a:
+- 0.6
+- 0.6
+- 0.6
+- 0.6
+- 0.6
+- 0.6
+- 0.6
+pwm_ceiling:
+- 300
+- 600
+- 300
+- 600
+- 300
+- 300
+- 300
+watchdog_s: 0.3
+max_sample_gap_s: 0.15
+elastic_elements: unknown
+payload_description: unknown

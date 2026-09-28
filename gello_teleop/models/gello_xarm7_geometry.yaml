@@ -1,0 +1,507 @@
+robot_name: gello_xarm7
+geometry_verified: false
+mesh_units_verified: true
+mesh_scale: 0.001
+note: Offline reconstruction. No CAD needed. Lengths in metres, angles in radians.
+  Unknown mechanical limits and complete-body inertias remain null. Motor CAD meshes
+  are nominal visual geometry only. Do not enable hardware from this draft.
+links:
+- name: base_link
+  visuals:
+  - mesh: xarm7/base.STL
+    xyz:
+    - 0.07
+    - 0.0
+    - 0.0
+    rpy:
+    - 1.5707963267948966
+    - -0.0
+    - 0.0
+  - mesh: motors/XL330_body.STL
+    role: servo_case
+    rgba: 0.22 0.24 0.28 1
+    xyz:
+    - 0.0
+    - 0.0
+    - 0.029500000000000002
+    rpy:
+    - 0.0
+    - -0.0
+    - 1.5707963267948966
+    note: Nominal ROBOTIS CAD case geometry; not a mass/inertia prior
+  inertial: null
+  datum_status: STL-derived mating plane; zero clocking provisional
+- name: link1
+  visuals:
+  - mesh: xarm7/L1.STL
+    xyz:
+    - 0.0
+    - 0.006
+    - -0.0025
+    rpy:
+    - 0.0
+    - -0.0
+    - 0.0
+  - mesh: motors/XL330_horn.STL
+    xyz:
+    - 0.0
+    - 0.0
+    - -0.0065
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    role: servo_horn
+    rgba: 0.55 0.57 0.60 1
+    note: Output horn follows this child link; CAD horn mating face z=6.5 mm
+  - mesh: motors/XL330_body.STL
+    role: servo_case
+    rgba: 0.22 0.24 0.28 1
+    xyz:
+    - 0.0
+    - 0.0303
+    - 0.0385
+    rpy:
+    - -1.5707963267948966
+    - -0.0
+    - 0.0
+    note: Nominal ROBOTIS CAD case geometry; not a mass/inertia prior
+  inertial: null
+  datum_status: STL-derived mating plane; zero clocking provisional
+- name: link2
+  visuals:
+  - mesh: xarm7/L2.STL
+    xyz:
+    - 0.0
+    - -0.089
+    - -0.0265
+    rpy:
+    - 1.5707963267948966
+    - -0.0
+    - 0.0
+  - mesh: motors/XL330_horn.STL
+    xyz:
+    - 0.0
+    - 0.0
+    - -0.0065
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    role: servo_horn
+    rgba: 0.55 0.57 0.60 1
+    note: Output horn follows this child link; CAD horn mating face z=6.5 mm
+  - mesh: motors/XL330_body.STL
+    role: servo_case
+    rgba: 0.22 0.24 0.28 1
+    xyz:
+    - 0.0
+    - -0.0988
+    - -0.0165
+    rpy:
+    - -1.5707963267948966
+    - -0.0
+    - 3.141592653589793
+    note: Nominal ROBOTIS CAD case geometry; not a mass/inertia prior
+  inertial: null
+  datum_status: STL-derived mating plane; zero clocking provisional
+- name: link3
+  visuals:
+  - mesh: xarm7/L3.STL
+    xyz:
+    - 0.0
+    - 0.0
+    - -0.0025
+    rpy:
+    - 0.0
+    - -0.0
+    - 0.0
+  - mesh: motors/XL330_horn.STL
+    xyz:
+    - 0.0
+    - 0.0
+    - -0.0065
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    role: servo_horn
+    rgba: 0.55 0.57 0.60 1
+    note: Output horn follows this child link; CAD horn mating face z=6.5 mm
+  - mesh: motors/XL330_body.STL
+    role: servo_case
+    rgba: 0.22 0.24 0.28 1
+    xyz:
+    - 0.037899999999999996
+    - 0.011423582555058183
+    - 0.028539627601404494
+    rpy:
+    - -1.5707963267948966
+    - -0.4974191012639823
+    - -1.5707963267948966
+    note: Nominal ROBOTIS CAD case geometry; not a mass/inertia prior
+  inertial: null
+  datum_status: STL-derived mating plane; zero clocking provisional
+- name: link4
+  visuals:
+  - mesh: xarm7/L4.STL
+    xyz:
+    - 0.0
+    - 0.01
+    - 0.0125
+    rpy:
+    - -3.141592653589793
+    - -1.5707963267948966
+    - 0.0
+  - mesh: motors/XL330_horn.STL
+    xyz:
+    - 0.0
+    - 0.0
+    - -0.0065
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    role: servo_horn
+    rgba: 0.55 0.57 0.60 1
+    note: Output horn follows this child link; CAD horn mating face z=6.5 mm
+  - mesh: motors/XL330_body.STL
+    role: servo_case
+    rgba: 0.22 0.24 0.28 1
+    xyz:
+    - -0.045616459213557746
+    - -0.06990433035006308
+    - -0.036000000000000004
+    rpy:
+    - 0.820305215265625
+    - -1.5707963267948966
+    - 0.0
+    note: Nominal ROBOTIS CAD case geometry; not a mass/inertia prior
+  inertial: null
+  datum_status: STL-derived mating plane; zero clocking provisional
+- name: link5
+  visuals:
+  - mesh: xarm7/L5.STL
+    xyz:
+    - -0.001
+    - 0.0
+    - 0.08375
+    rpy:
+    - -1.5707963267948966
+    - -0.0
+    - -0.0
+  - mesh: motors/XL330_horn.STL
+    xyz:
+    - 0.0
+    - 0.0
+    - -0.0065
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    role: servo_horn
+    rgba: 0.55 0.57 0.60 1
+    note: Output horn follows this child link; CAD horn mating face z=6.5 mm
+  - mesh: motors/XL330_body.STL
+    role: servo_case
+    rgba: 0.22 0.24 0.28 1
+    xyz:
+    - -0.0008000000000000007
+    - 0.0
+    - 0.08375
+    rpy:
+    - 1.5707963267948966
+    - -0.0
+    - -1.5707963267948966
+    note: Nominal ROBOTIS CAD case geometry; not a mass/inertia prior
+  inertial: null
+  datum_status: STL-derived mating plane; zero clocking provisional
+- name: link6
+  visuals:
+  - mesh: xarm7/L6.STL
+    xyz:
+    - 0.015
+    - 0.015
+    - -0.0025
+    rpy:
+    - -3.141592653589793
+    - -1.5707963267948966
+    - 0.0
+  - mesh: motors/XL330_horn.STL
+    xyz:
+    - 0.0
+    - 0.0
+    - -0.0065
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    role: servo_horn
+    rgba: 0.55 0.57 0.60 1
+    note: Output horn follows this child link; CAD horn mating face z=6.5 mm
+  - mesh: motors/XL330_body.STL
+    role: servo_case
+    rgba: 0.22 0.24 0.28 1
+    xyz:
+    - 0.02332438
+    - 0.0508
+    - 0.0
+    rpy:
+    - -1.5707963267948966
+    - 1.5707963267948966
+    - 0.0
+    note: Nominal ROBOTIS CAD case geometry; not a mass/inertia prior
+  inertial: null
+  datum_status: STL-derived mating plane; zero clocking provisional
+- name: link7
+  visuals:
+  - mesh: gripper/handle.STL
+    xyz:
+    - 0.0
+    - 0.014230734396320126
+    - 0.021716334371133485
+    rpy:
+    - 1.5707963267948966
+    - -0.05235989690784523
+    - 1.5707963267948966
+  - mesh: motors/XL330_horn.STL
+    xyz:
+    - 0.0
+    - 0.0
+    - -0.0065
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    role: servo_horn
+    rgba: 0.55 0.57 0.60 1
+    note: Output horn follows this child link; CAD horn mating face z=6.5 mm
+  inertial: null
+  datum_status: STL-derived mating plane; zero clocking provisional
+joints:
+- name: joint1
+  parent: base_link
+  child: link1
+  xyz:
+  - 0.0
+  - 0.0
+  - 0.036000000000000004
+  rpy:
+  - 0.0
+  - -0.0
+  - 0.0
+  axis:
+  - 0.0
+  - 0.0
+  - 1.0
+  lower: null
+  upper: null
+  effort: null
+  velocity: null
+  datum_status: axis from bolt pattern + nominal motor depth; shaft-end choice provisional
+  motor_rear_case_raw_mm:
+  - -62.5
+  - 10.0
+  - 0.0
+  shaft_axis_point_raw_mm:
+  - -70.0
+  - 36.0
+  - 0.0
+- name: joint2
+  parent: link1
+  child: link2
+  xyz:
+  - 0.0
+  - 0.0368
+  - 0.0385
+  rpy:
+  - -1.5707963267948966
+  - -0.0
+  - 0.0
+  axis:
+  - 0.0
+  - 0.0
+  - 1.0
+  lower: null
+  upper: null
+  effort: null
+  velocity: null
+  datum_status: axis from bolt pattern + nominal motor depth; shaft-end choice provisional
+  motor_rear_case_raw_mm:
+  - 0.0
+  - 4.8
+  - 48.5
+  shaft_axis_point_raw_mm:
+  - 0.0
+  - 30.8
+  - 41.0
+- name: joint3
+  parent: link2
+  child: link3
+  xyz:
+  - 0.0
+  - -0.1053
+  - -0.0165
+  rpy:
+  - 1.5707963267948966
+  - 1.5707963267948966
+  - 0.0
+  axis:
+  - 0.0
+  - 0.0
+  - 1.0
+  lower: null
+  upper: null
+  effort: null
+  velocity: null
+  datum_status: axis from bolt pattern + nominal motor depth; shaft-end choice provisional
+  motor_rear_case_raw_mm:
+  - 0.0
+  - 17.5
+  - -9.7
+  shaft_axis_point_raw_mm:
+  - 0.0
+  - 10.0
+  - 16.3
+- name: joint4
+  parent: link3
+  child: link4
+  xyz:
+  - 0.0444
+  - 0.011423582555058183
+  - 0.028539627601404494
+  rpy:
+  - 1.5707963267948966
+  - -0.7504913139119634
+  - 1.5707963267948966
+  axis:
+  - 0.0
+  - 0.0
+  - 1.0
+  lower: null
+  upper: null
+  effort: null
+  velocity: null
+  datum_status: axis from bolt pattern + nominal motor depth; shaft-end choice provisional
+  motor_rear_case_raw_mm:
+  - 18.4
+  - 15.002275
+  - 37.630755
+  shaft_axis_point_raw_mm:
+  - 44.4
+  - 11.423582555058182
+  - 31.039627601404494
+- name: joint5
+  parent: link4
+  child: link5
+  xyz:
+  - -0.050049446334755616
+  - -0.074658131480032
+  - -0.036000000000000004
+  rpy:
+  - 0.820305215265625
+  - -1.5707963267948966
+  - 0.0
+  axis:
+  - 0.0
+  - 0.0
+  - 1.0
+  lower: null
+  upper: null
+  effort: null
+  velocity: null
+  datum_status: axis from bolt pattern + nominal motor depth; shaft-end choice provisional
+  motor_rear_case_raw_mm:
+  - -48.5
+  - 70.7579121
+  - -26.832342699999998
+  shaft_axis_point_raw_mm:
+  - -48.5
+  - 84.658131480032
+  - -50.049446334755615
+- name: joint6
+  parent: link5
+  child: link6
+  xyz:
+  - -0.007300000000000001
+  - 0.0
+  - 0.08375
+  rpy:
+  - 1.5707963267948966
+  - 1.2246467991473532e-16
+  - -1.5707963267948966
+  axis:
+  - 0.0
+  - 0.0
+  - 1.0
+  lower: null
+  upper: null
+  effort: null
+  velocity: null
+  datum_status: axis from bolt pattern + nominal motor depth; shaft-end choice provisional
+  motor_rear_case_raw_mm:
+  - 19.7
+  - 7.5
+  - 0.0
+  shaft_axis_point_raw_mm:
+  - -6.300000000000001
+  - 0.0
+  - 0.0
+- name: joint7
+  parent: link6
+  child: link7
+  xyz:
+  - 0.02332438
+  - 0.0573
+  - 0.0
+  rpy:
+  - -1.5707963267948966
+  - 1.5707963267948966
+  - 0.0
+  axis:
+  - 0.0
+  - 0.0
+  - 1.0
+  lower: null
+  upper: null
+  effort: null
+  velocity: null
+  datum_status: axis from bolt pattern + nominal motor depth; shaft-end choice provisional
+  motor_rear_case_raw_mm:
+  - 2.5
+  - -16.3
+  - 15.82438
+  shaft_axis_point_raw_mm:
+  - 2.5
+  - -42.3
+  - 8.32438
+geometry_source: STL mounting-hole fits + ROBOTIS X330 drawing and nominal STEP geometry
+assembly_status: mounting sides corrected after overlap audit; physical review still
+  pending
+joint_zero_status: virtual assembly datum, NOT the existing teleoperation encoder
+  zero
+horn_clock_degrees:
+- 0.0
+- 0.0
+- -90.0
+- 71.5
+- 0.0
+- 180.0
+- 180.0
+comparison_reference_q_deg:
+- 90.0
+- 0.0
+- -90.0
+- 90.0
+- 0.0
+- 90.0
+- -90.0
+sources:
+- https://github.com/wuphilipp/gello_mechanical
+- https://www.robotis.com/service/download.php?no=1986
+- https://www.robotis.com/service/download.php?no=1987
+photo_review_status: User identified J3 visual gap and reversed J5/L4/L5 faces. Corrected
+  case sides at L3/L4/L6 after solid overlap audit; L5 horn face reversed; output
+  horn visuals added. Physical review pending.
+viewer_revision: middle-review-v3
+comparison_reference_source: User-selected viewer middle pose; not an encoder calibration

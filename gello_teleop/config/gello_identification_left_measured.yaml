@@ -1,0 +1,94 @@
+port: /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTBXAQE9-if00-port0
+baudrate: 57600
+joint_ids:
+- 1
+- 2
+- 3
+- 4
+- 5
+- 6
+- 7
+encoder_signs:
+- 1
+- -1
+- 1
+- 1
+- 1
+- -1
+- 1
+encoder_offsets_rad:
+- 3.129320807286708
+- 3.126252845710937
+- 1.4741555371581012
+- 1.196505341345697
+- 3.1492625575292212
+- 4.643359518134939
+- 1.5876701154616386
+joint_coordinates_verified: false
+note: Read-only manual endpoints, expressed in the PREVIOUS encoder convention. Confirm/recalibrate
+  that convention against the reconstructed leader URDF before driving. These local
+  ranges do not prove mechanical hard limits or multi-joint clearance.
+center_rad:
+- -0.17180584824319256
+- 0.050161171763861034
+- 0.07669903939428213
+- 1.630621250727539
+- -0.10891263593988088
+- 1.5287649264119332
+- -0.0006135923151544542
+lower_rad:
+- -0.661520692660194
+- -0.5634993203143024
+- -0.5909575764174553
+- 1.3803608072994862
+- -0.6188760267569742
+- 0.9913432794916863
+- -0.6448003020722409
+upper_rad:
+- 0.33064103671326134
+- 0.5461653374111943
+- 0.42712842827126846
+- 1.9914817089621484
+- 0.4237536705379204
+- 2.095639004459583
+- 0.547085725883925
+amplitude_rad:
+- 0.05235987755982989
+- 0.05235987755982989
+- 0.05235987755982989
+- 0.05235987755982989
+- 0.05235987755982989
+- 0.05235987755982989
+- 0.05235987755982989
+duration_s: 60.0
+sample_hz: 8.0
+max_velocity_rad_s: 0.15
+max_acceleration_rad_s2: 0.5
+max_tracking_error_rad: 0.08726646259971647
+start_tolerance_rad: 0.017453292519943295
+max_temperature_c: 50
+min_voltage_v: 3.7
+max_voltage_v: 6.0
+max_current_a:
+- 0.6
+- 0.6
+- 0.6
+- 0.6
+- 0.6
+- 0.6
+- 0.6
+pwm_ceiling:
+- 300
+- 600
+- 300
+- 600
+- 300
+- 300
+- 300
+watchdog_s: 0.3
+max_sample_gap_s: 0.15
+elastic_elements: unknown
+payload_description: unknown
+measured_range_status: manually selected local operating interval; no swept-volume/collision
+  certification
+range_measurement_file: /home/eid/code/xarm_ws/gello_teleop/config/gello_identification_left_measured.ranges.json

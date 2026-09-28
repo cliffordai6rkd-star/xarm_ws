@@ -1,0 +1,173 @@
+<?xml version='1.0' encoding='utf-8'?>
+<robot name="gello_xarm7_UNVERIFIED_DRAFT">
+  <!--UNVERIFIED geometry draft. Continuous joints are for visualization only; no measured motion ranges, encoder zero or dynamics.-->
+  <link name="base_link">
+    <visual>
+      <origin xyz="0.07 0 0" rpy="1.57079632679 -0 0" />
+      <geometry>
+        <mesh filename="file:///home/eid/code/xarm_ws/mesh/gello_mechanical/xarm7/base.STL" scale="0.001 0.001 0.001" />
+      </geometry>
+    </visual>
+    <visual>
+      <origin xyz="0.0075 0 0.0215" rpy="0 -0 -1.57079632679" />
+      <geometry>
+        <box size="0.02 0.034 0.023" />
+      </geometry>
+      <material name="servo_envelope">
+        <color rgba="0.22 0.24 0.28 1" />
+      </material>
+    </visual>
+  </link>
+  <link name="link1">
+    <visual>
+      <origin xyz="0 0.006 -0.0025" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="file:///home/eid/code/xarm_ws/mesh/gello_mechanical/xarm7/L1.STL" scale="0.001 0.001 0.001" />
+      </geometry>
+    </visual>
+    <visual>
+      <origin xyz="0 0.0223 0.046" rpy="-1.57079632679 -0 0" />
+      <geometry>
+        <box size="0.02 0.034 0.023" />
+      </geometry>
+      <material name="servo_envelope">
+        <color rgba="0.22 0.24 0.28 1" />
+      </material>
+    </visual>
+  </link>
+  <link name="link2">
+    <visual>
+      <origin xyz="0 -0.089 -0.0265" rpy="1.57079632679 -0 0" />
+      <geometry>
+        <mesh filename="file:///home/eid/code/xarm_ws/mesh/gello_mechanical/xarm7/L2.STL" scale="0.001 0.001 0.001" />
+      </geometry>
+    </visual>
+    <visual>
+      <origin xyz="0 -0.0908 -0.009" rpy="1.57079632679 -0 0" />
+      <geometry>
+        <box size="0.02 0.034 0.023" />
+      </geometry>
+      <material name="servo_envelope">
+        <color rgba="0.22 0.24 0.28 1" />
+      </material>
+    </visual>
+  </link>
+  <link name="link3">
+    <visual>
+      <origin xyz="0 0 -0.0025" rpy="0 -0 0" />
+      <geometry>
+        <mesh filename="file:///home/eid/code/xarm_ws/mesh/gello_mechanical/xarm7/L3.STL" scale="0.001 0.001 0.001" />
+      </geometry>
+    </visual>
+    <visual>
+      <origin xyz="0.0046 0.015002275 0.035130755" rpy="-1.57079632679 0.497419101264 1.57079632679" />
+      <geometry>
+        <box size="0.02 0.034 0.023" />
+      </geometry>
+      <material name="servo_envelope">
+        <color rgba="0.22 0.24 0.28 1" />
+      </material>
+    </visual>
+  </link>
+  <link name="link4">
+    <visual>
+      <origin xyz="0 0.01 0.0125" rpy="-3.14159265359 -1.57079632679 0" />
+      <geometry>
+        <mesh filename="file:///home/eid/code/xarm_ws/mesh/gello_mechanical/xarm7/L4.STL" scale="0.001 0.001 0.001" />
+      </geometry>
+    </visual>
+    <visual>
+      <origin xyz="-0.0174207700856 -0.0506652266701 -0.036" rpy="-2.32128743832 -1.57079632679 0" />
+      <geometry>
+        <box size="0.02 0.034 0.023" />
+      </geometry>
+      <material name="servo_envelope">
+        <color rgba="0.22 0.24 0.28 1" />
+      </material>
+    </visual>
+  </link>
+  <link name="link5">
+    <visual>
+      <origin xyz="-0.001 0 -0.08025" rpy="1.57079632679 -0 0" />
+      <geometry>
+        <mesh filename="file:///home/eid/code/xarm_ws/mesh/gello_mechanical/xarm7/L5.STL" scale="0.001 0.001 0.001" />
+      </geometry>
+    </visual>
+    <visual>
+      <origin xyz="0.0072 0 -0.07275" rpy="1.57079632679 -0 -1.57079632679" />
+      <geometry>
+        <box size="0.02 0.034 0.023" />
+      </geometry>
+      <material name="servo_envelope">
+        <color rgba="0.22 0.24 0.28 1" />
+      </material>
+    </visual>
+  </link>
+  <link name="link6">
+    <visual>
+      <origin xyz="0.015 0.015 -0.0025" rpy="-3.14159265359 -1.57079632679 0" />
+      <geometry>
+        <mesh filename="file:///home/eid/code/xarm_ws/mesh/gello_mechanical/xarm7/L6.STL" scale="0.001 0.001 0.001" />
+      </geometry>
+    </visual>
+    <visual>
+      <origin xyz="0.03082438 0.0175 0" rpy="1.57079632679 -1.57079632679 0" />
+      <geometry>
+        <box size="0.02 0.034 0.023" />
+      </geometry>
+      <material name="servo_envelope">
+        <color rgba="0.22 0.24 0.28 1" />
+      </material>
+    </visual>
+  </link>
+  <link name="link7">
+    <visual>
+      <origin xyz="0 0.0142307343963 0.0217163343711" rpy="1.57079632679 -0.0523598969078 1.57079632679" />
+      <geometry>
+        <mesh filename="file:///home/eid/code/xarm_ws/mesh/gello_mechanical/gripper/handle.STL" scale="0.001 0.001 0.001" />
+      </geometry>
+    </visual>
+  </link>
+  <joint name="joint1" type="continuous">
+    <parent link="base_link" />
+    <child link="link1" />
+    <origin xyz="0 0 0.036" rpy="0 -0 0" />
+    <axis xyz="0 0 1" />
+  </joint>
+  <joint name="joint2" type="continuous">
+    <parent link="link1" />
+    <child link="link2" />
+    <origin xyz="0 0.0368 0.0385" rpy="-1.57079632679 -0 0" />
+    <axis xyz="0 0 1" />
+  </joint>
+  <joint name="joint3" type="continuous">
+    <parent link="link2" />
+    <child link="link3" />
+    <origin xyz="0 -0.1053 -0.0165" rpy="1.57079632679 -1.57079632679 0" />
+    <axis xyz="0 0 1" />
+  </joint>
+  <joint name="joint4" type="continuous">
+    <parent link="link3" />
+    <child link="link4" />
+    <origin xyz="-0.0099 0.0114235825551 0.0285396276014" rpy="1.57079632679 -0.750491842803 -1.57079632679" />
+    <axis xyz="0 0 1" />
+  </joint>
+  <joint name="joint5" type="continuous">
+    <parent link="link4" />
+    <child link="link5" />
+    <origin xyz="-0.0130169539652 -0.0349456082403 -0.036" rpy="-2.32128743832 -1.57079632679 0" />
+    <axis xyz="0 0 1" />
+  </joint>
+  <joint name="joint6" type="continuous">
+    <parent link="link5" />
+    <child link="link6" />
+    <origin xyz="-0.0073 0 -0.08025" rpy="1.57079632679 -0 -1.57079632679" />
+    <axis xyz="0 0 1" />
+  </joint>
+  <joint name="joint7" type="continuous">
+    <parent link="link6" />
+    <child link="link7" />
+    <origin xyz="0.02332438 0.003 0" rpy="1.57079632679 1.57079632679 0" />
+    <axis xyz="0 0 1" />
+  </joint>
+</robot>

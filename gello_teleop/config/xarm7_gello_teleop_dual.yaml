@@ -1,0 +1,86 @@
+# Robot IPs and GELLO sides confirmed on this host; verify reset paths before use.
+left:
+  RobotConfig:
+    robot_ip: "192.168.1.203"
+    robot_mode: 6
+    robot_speed: 20        # deg/s during following
+    robot_acc: 100         # deg/s^2 during following
+    reset_q: [0.0, 0.0, 0.0, 1.570796, 0.0, 1.570796, -0.0]  # rad; captured from the user-positioned left arm
+    reset_speed: 10        # deg/s during reset
+    reset_acc: 50          # deg/s^2 during reset
+    reset_timeout: 60      # seconds
+    reset_tolerance: 0.03  # radians
+    command_timeout: 0.5   # seconds per SDK command
+    collision_sensitivity: null  # preserve controller protection settings
+    gripper_type: 1        # 0: none, 1: xArm, 2: xArm G2, 3: Bio G2, 11: Robotiq
+
+  TeleoperatorConfig:
+    port: "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTBXAQE9-if00-port0"
+    baudrate: 57600
+    joint_ids: [1, 2, 3, 4, 5, 6, 7]
+    joint_signs: [1, -1, 1, 1, 1, -1, 1]    # verify separately on the left and right hardware
+    gripper_id: 8          # -1 if absent; use gripper_type: 0 as well
+    torque_joint_ids: []  # fixed joints must use Dynamixel position mode (3)
+    fps: 30
+    read_timeout: 0.2
+    watchdog_timeout: 1.0
+    alignment_tolerance: 0.05  # radians
+    max_joint_step: 0.25       # radians; stop on raw sample jumps
+    max_joint_velocity: 0.5   # rad/s; limit target changes
+    gripper_open_deg: null    # set BOTH absolute encoder endpoints, or leave both null
+    gripper_close_deg: null
+    gripper_travel_deg: -42   # relative to manually opened pose when endpoints are null
+    hold_pwm: 100              # position-mode Goal PWM output ceiling, not holding torque
+    hold_pwm_by_joint: [300, 600, 300, 600, 300, 300, 300]  # J2 needs extra holding torque on this setup
+    joint_limits: null       # optional [lower, upper] radians per joint; controller limits always checked
+    control_mode: position   # switch to mit_to_position after tuning the gains below
+    dynamics_urdf: ../models/xarm7_dynamics.urdf  # bare-arm model; gripper/payload absent
+    dynamics_joint_names: [joint1, joint2, joint3, joint4, joint5, joint6, joint7]
+    mit_kp: null             # seven tuned Nm/rad values required for mit_to_position
+    mit_kd: null             # seven tuned Nm/(rad/s) values required
+    mit_torque_limit_nm: null  # seven verified positive torque limits required
+    mit_acceleration_limit: 1.0  # rad/s^2
+    mit_tracking_error_limit: 0.15  # rad
+
+right:
+  RobotConfig:
+    robot_ip: "192.168.1.196"
+    robot_mode: 6
+    robot_speed: 20        # deg/s during following
+    robot_acc: 100         # deg/s^2 during following
+    reset_q: [0.0, 0.0, 0.0, 1.570796, 0.0, 1.570796, 0.0]  # rad; captured from the user-positioned right arm
+    reset_speed: 10        # deg/s during reset
+    reset_acc: 50          # deg/s^2 during reset
+    reset_timeout: 60      # seconds
+    reset_tolerance: 0.03  # radians
+    command_timeout: 0.5   # seconds per SDK command
+    collision_sensitivity: null  # preserve controller protection settings
+    gripper_type: 1        # 0: none, 1: xArm, 2: xArm G2, 3: Bio G2, 11: Robotiq
+
+  TeleoperatorConfig:
+    port: "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTBX14YZ-if00-port0"
+    baudrate: 57600
+    joint_ids: [1, 2, 3, 4, 5, 6, 7]
+    joint_signs: [1, -1, 1, 1, 1, -1, 1]    # verify separately on the left and right hardware
+    gripper_id: 8          # -1 if absent; use gripper_type: 0 as well
+    torque_joint_ids: []  # fixed joints must use Dynamixel position mode (3)
+    fps: 100
+    read_timeout: 0.2
+    watchdog_timeout: 1.0
+    alignment_tolerance: 0.05  # radians
+    max_joint_step: 0.25       # radians; stop on raw sample jumps
+    max_joint_velocity: 0.5   # rad/s; limit target changes
+    gripper_open_deg: null    # set BOTH absolute encoder endpoints, or leave both null
+    gripper_close_deg: null
+    gripper_travel_deg: -42   # relative to manually opened pose when endpoints are null
+    # hold_pwm: 300              # position-mode Goal PWM output ceiling, not holding torque
+    hold_pwm_by_joint:  [300, 600, 300, 600, 300, 300, 300] # J2 needs extra holding torque on this setup
+    joint_limits: null       # optional [lower, upper] radians per joint; controller limits always checked
+    control_mode: position   # switch to mit_to_position after tuning the gains below
+    dynamics_urdf: ../models/xarm7_dynamics.urdf  # bare-arm model; gripper/payload absent
+    dynamics_joint_names: [joint1, joint2, joint3, joint4, joint5, joint6, joint7]
+    mit_kp: null             # seven tuned Nm/rad values required for mit_to_position
+    mit_kd: null             # seven tuned Nm/(rad/s) values required
+    mit_torque_limit_nm: null  # seven verified positive torque limits required
+    mit_acceleration_limit: 1.0  # rad/s^2
+    mit_tracking_error_limit: 0.15  # rad

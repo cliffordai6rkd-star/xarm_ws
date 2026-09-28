@@ -1,0 +1,426 @@
+robot_name: gello_xarm7
+geometry_verified: false
+mesh_units_verified: true
+mesh_scale: 0.001
+note: Offline reconstruction. No CAD needed. Lengths in metres, angles in radians.
+  Unknown mechanical limits and complete-body inertias remain null. Motor boxes are
+  nominal visual envelopes only. Do not enable hardware from this draft.
+links:
+- name: base_link
+  visuals:
+  - mesh: xarm7/base.STL
+    xyz:
+    - 0.07
+    - 0.0
+    - 0.0
+    rpy:
+    - 1.5707963267948966
+    - -0.0
+    - 0.0
+  - box_m:
+    - 0.02
+    - 0.034
+    - 0.023
+    xyz:
+    - 0.0075
+    - 0.0
+    - 0.021500000000000002
+    rpy:
+    - 0.0
+    - -0.0
+    - -1.5707963267948966
+    note: Nominal case envelope; excludes horn/fasteners and is not an inertia prior
+  inertial: null
+  datum_status: STL-derived mating plane; zero clocking provisional
+- name: link1
+  visuals:
+  - mesh: xarm7/L1.STL
+    xyz:
+    - 0.0
+    - 0.006
+    - -0.0025
+    rpy:
+    - 0.0
+    - -0.0
+    - 0.0
+  - box_m:
+    - 0.02
+    - 0.034
+    - 0.023
+    xyz:
+    - 0.0
+    - 0.0223
+    - 0.046
+    rpy:
+    - -1.5707963267948966
+    - -0.0
+    - 0.0
+    note: Nominal case envelope; excludes horn/fasteners and is not an inertia prior
+  inertial: null
+  datum_status: STL-derived mating plane; zero clocking provisional
+- name: link2
+  visuals:
+  - mesh: xarm7/L2.STL
+    xyz:
+    - 0.0
+    - -0.089
+    - -0.0265
+    rpy:
+    - 1.5707963267948966
+    - -0.0
+    - 0.0
+  - box_m:
+    - 0.02
+    - 0.034
+    - 0.023
+    xyz:
+    - 0.0
+    - -0.0908
+    - -0.009000000000000001
+    rpy:
+    - 1.5707963267948966
+    - -0.0
+    - 0.0
+    note: Nominal case envelope; excludes horn/fasteners and is not an inertia prior
+  inertial: null
+  datum_status: STL-derived mating plane; zero clocking provisional
+- name: link3
+  visuals:
+  - mesh: xarm7/L3.STL
+    xyz:
+    - 0.0
+    - 0.0
+    - -0.0025
+    rpy:
+    - 0.0
+    - -0.0
+    - 0.0
+  - box_m:
+    - 0.02
+    - 0.034
+    - 0.023
+    xyz:
+    - 0.004600000000000002
+    - 0.015002274999999999
+    - 0.035130755
+    rpy:
+    - -1.5707963267948966
+    - 0.4974191012639823
+    - 1.5707963267948966
+    note: Nominal case envelope; excludes horn/fasteners and is not an inertia prior
+  inertial: null
+  datum_status: STL-derived mating plane; zero clocking provisional
+- name: link4
+  visuals:
+  - mesh: xarm7/L4.STL
+    xyz:
+    - 0.0
+    - 0.01
+    - 0.0125
+    rpy:
+    - -3.141592653589793
+    - -1.5707963267948966
+    - 0.0
+  - box_m:
+    - 0.02
+    - 0.034
+    - 0.023
+    xyz:
+    - -0.017420770085573
+    - -0.05066522667005498
+    - -0.036000000000000004
+    rpy:
+    - -2.321287438324168
+    - -1.5707963267948966
+    - 0.0
+    note: Nominal case envelope; excludes horn/fasteners and is not an inertia prior
+  inertial: null
+  datum_status: STL-derived mating plane; zero clocking provisional
+- name: link5
+  visuals:
+  - mesh: xarm7/L5.STL
+    xyz:
+    - -0.001
+    - 0.0
+    - -0.08025
+    rpy:
+    - 1.5707963267948966
+    - -0.0
+    - 0.0
+  - box_m:
+    - 0.02
+    - 0.034
+    - 0.023
+    xyz:
+    - 0.0072
+    - 0.0
+    - -0.07275
+    rpy:
+    - 1.5707963267948966
+    - -0.0
+    - -1.5707963267948966
+    note: Nominal case envelope; excludes horn/fasteners and is not an inertia prior
+  inertial: null
+  datum_status: STL-derived mating plane; zero clocking provisional
+- name: link6
+  visuals:
+  - mesh: xarm7/L6.STL
+    xyz:
+    - 0.015
+    - 0.015
+    - -0.0025
+    rpy:
+    - -3.141592653589793
+    - -1.5707963267948966
+    - 0.0
+  - box_m:
+    - 0.02
+    - 0.034
+    - 0.023
+    xyz:
+    - 0.03082438
+    - 0.0175
+    - 0.0
+    rpy:
+    - 1.5707963267948966
+    - -1.5707963267948966
+    - 0.0
+    note: Nominal case envelope; excludes horn/fasteners and is not an inertia prior
+  inertial: null
+  datum_status: STL-derived mating plane; zero clocking provisional
+- name: link7
+  visuals:
+  - mesh: gripper/handle.STL
+    xyz:
+    - 0.0
+    - 0.014230734396320126
+    - 0.021716334371133485
+    rpy:
+    - 1.5707963267948966
+    - -0.05235989690784523
+    - 1.5707963267948966
+  inertial: null
+  datum_status: STL-derived mating plane; zero clocking provisional
+joints:
+- name: joint1
+  parent: base_link
+  child: link1
+  xyz:
+  - 0.0
+  - 0.0
+  - 0.036000000000000004
+  rpy:
+  - 0.0
+  - -0.0
+  - 0.0
+  axis:
+  - 0.0
+  - 0.0
+  - 1.0
+  lower: null
+  upper: null
+  effort: null
+  velocity: null
+  datum_status: axis from bolt pattern + nominal motor depth; shaft-end choice provisional
+  motor_rear_case_raw_mm:
+  - -62.5
+  - 10.0
+  - 0.0
+  shaft_axis_point_raw_mm:
+  - -70.0
+  - 36.0
+  - 0.0
+- name: joint2
+  parent: link1
+  child: link2
+  xyz:
+  - 0.0
+  - 0.0368
+  - 0.0385
+  rpy:
+  - -1.5707963267948966
+  - -0.0
+  - 0.0
+  axis:
+  - 0.0
+  - 0.0
+  - 1.0
+  lower: null
+  upper: null
+  effort: null
+  velocity: null
+  datum_status: axis from bolt pattern + nominal motor depth; shaft-end choice provisional
+  motor_rear_case_raw_mm:
+  - 0.0
+  - 4.8
+  - 48.5
+  shaft_axis_point_raw_mm:
+  - 0.0
+  - 30.8
+  - 41.0
+- name: joint3
+  parent: link2
+  child: link3
+  xyz:
+  - 0.0
+  - -0.1053
+  - -0.0165
+  rpy:
+  - 1.5707963267948966
+  - -1.5707963267948966
+  - 0.0
+  axis:
+  - 0.0
+  - 0.0
+  - 1.0
+  lower: null
+  upper: null
+  effort: null
+  velocity: null
+  datum_status: axis from bolt pattern + nominal motor depth; shaft-end choice provisional
+  motor_rear_case_raw_mm:
+  - 0.0
+  - 17.5
+  - -9.7
+  shaft_axis_point_raw_mm:
+  - 0.0
+  - 10.0
+  - 16.3
+- name: joint4
+  parent: link3
+  child: link4
+  xyz:
+  - -0.009899999999999999
+  - 0.011423582555058183
+  - 0.028539627601404494
+  rpy:
+  - 1.5707963267948966
+  - -0.7504918428031603
+  - -1.5707963267948966
+  axis:
+  - 0.0
+  - 0.0
+  - 1.0
+  lower: null
+  upper: null
+  effort: null
+  velocity: null
+  datum_status: axis from bolt pattern + nominal motor depth; shaft-end choice provisional
+  motor_rear_case_raw_mm:
+  - 16.1
+  - 15.002275
+  - 37.630755
+  shaft_axis_point_raw_mm:
+  - -9.899999999999999
+  - 11.423582555058182
+  - 31.039627601404494
+- name: joint5
+  parent: link4
+  child: link5
+  xyz:
+  - -0.013016953965172665
+  - -0.034945608240280604
+  - -0.036000000000000004
+  rpy:
+  - -2.321287438324168
+  - -1.5707963267948966
+  - 0.0
+  axis:
+  - 0.0
+  - 0.0
+  - 1.0
+  lower: null
+  upper: null
+  effort: null
+  velocity: null
+  datum_status: axis from bolt pattern + nominal motor depth; shaft-end choice provisional
+  motor_rear_case_raw_mm:
+  - -48.5
+  - 69.0757979
+  - -25.2637473
+  shaft_axis_point_raw_mm:
+  - -48.5
+  - 44.945608240280606
+  - -13.016953965172664
+- name: joint6
+  parent: link5
+  child: link6
+  xyz:
+  - -0.007300000000000001
+  - 0.0
+  - -0.08025
+  rpy:
+  - 1.5707963267948966
+  - -0.0
+  - -1.5707963267948966
+  axis:
+  - 0.0
+  - 0.0
+  - 1.0
+  lower: null
+  upper: null
+  effort: null
+  velocity: null
+  datum_status: axis from bolt pattern + nominal motor depth; shaft-end choice provisional
+  motor_rear_case_raw_mm:
+  - 19.7
+  - 7.5
+  - 0.0
+  shaft_axis_point_raw_mm:
+  - -6.300000000000001
+  - 0.0
+  - 0.0
+- name: joint7
+  parent: link6
+  child: link7
+  xyz:
+  - 0.02332438
+  - 0.003
+  - 0.0
+  rpy:
+  - 1.5707963267948966
+  - 1.5707963267948966
+  - 0.0
+  axis:
+  - 0.0
+  - 0.0
+  - 1.0
+  lower: null
+  upper: null
+  effort: null
+  velocity: null
+  datum_status: axis from bolt pattern + nominal motor depth; shaft-end choice provisional
+  motor_rear_case_raw_mm:
+  - 2.5
+  - -14.0
+  - 15.82438
+  shaft_axis_point_raw_mm:
+  - 2.5
+  - 12.0
+  - 8.32438
+geometry_source: STL mounting-hole fits + ROBOTIS X330 dimension drawing
+assembly_status: provisional; motor seats/shaft ends/horn clocking need physical confirmation
+joint_zero_status: virtual assembly datum, NOT the existing teleoperation encoder
+  zero
+horn_clock_degrees:
+- 0.0
+- 0.0
+- 90.0
+- 194.5
+- 0.0
+- 0.0
+- 180.0
+comparison_reference_q_deg:
+- 0.0
+- 0.0
+- 0.0
+- 90.0
+- 0.0
+- 90.0
+- 0.0
+sources:
+- https://github.com/wuphilipp/gello_mechanical
+- https://www.robotis.com/service/download.php?no=1986
+photo_review_status: Gross link topology supported by supplied photos; reference clocking
+  revised as a coordinate convention. Encoder zero/signs and detailed motor seating
+  NOT verified.
