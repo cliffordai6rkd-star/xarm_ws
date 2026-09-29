@@ -36,6 +36,29 @@ FOLLOWER_TELEOP_DATASETS = frozenset(
         "torque_valid_follower",
         "current_valid_leader",
         "current_valid_follower",
+        "ddq_follower",
+        "ddq_follower_raw",
+        "q_leader_raw",
+        "q_leader_mapped",
+        "q_leader_valid",
+        "q_leader_timestamp_us",
+        "q_leader_acquired_timestamp_us",
+        "q_leader_sequence",
+        "q_leader_age_us",
+        "q_follower_timestamp_us",
+        "q_follower_acquired_timestamp_us",
+        "q_follower_sequence",
+        "q_follower_age_us",
+        "q_follower_valid",
+        "q_follower_repeated",
+        "q_cmd_timestamp_us",
+        "q_cmd_send_ok",
+        "q_cmd_sequence",
+        "dq_valid_follower",
+        "ddq_valid_follower",
+        "gripper_follower_valid",
+        "gripper_cmd_valid",
+        "sample_lateness_us",
         "gripper_follower",
         "gripper_cmd",
         "tau_g",
@@ -287,6 +310,11 @@ class EpisodeBuffer:
             teleop.attrs["joint_layout"] = (
                 "follower joint vectors are concatenated in arm_names order"
             )
+            teleop.attrs["clock"] = "unix_epoch timestamps; scheduling uses monotonic"
+            teleop.attrs["timestamp_definition"] = (
+                "state acquisition host_receive time; source hardware timestamps are "
+                "stored separately when available"
+            )
             teleop.attrs["pose_layout"] = (
                 "single follower: (N,4,4); multi follower: (N,A,4,4), "
                 "A follows arm_names"
@@ -329,6 +357,37 @@ class EpisodeBuffer:
                     dataset.attrs["source"] = "actual_follower_command_minus_feedback"
                     dataset.attrs["definition"] = "q_cmd - q_follower at the same state sample"
                     dataset.attrs["command_semantics"] = "causal_zoh_at_state_sample"
+                if name in {"q_leader_raw", "q_leader_mapped"}:
+                    dataset.attrs["unit"] = "rad"
+                    dataset.attrs["joint_layout"] = "arm_names order"
+                    dataset.attrs["definition"] = (
+                        "GELLO encoder coordinates before calibration mapping"
+                        if name == "q_leader_raw" else
+                        "GELLO joint coordinates after configured signs and offsets"
+                    )
+                if name in {"ddq_follower", "ddq_follower_raw"}:
+                    dataset.attrs["unit"] = "rad/s^2"
+                    dataset.attrs["definition"] = (
+                        "SDK feedback acceleration using actual feedback dt"
+                        if name == "ddq_follower_raw" else
+                        "causal EMA filtered ddq_follower_raw using actual feedback samples"
+                    )
+                    dataset.attrs["validity_path"] = "teleop/ddq_valid_follower"
+                if name == "q_follower_repeated":
+                    dataset.attrs["definition"] = "1 when this state row repeats the previous follower timestamp"
+                if name == "current_follower":
+                    dataset.attrs["source"] = "xArm SDK get_joint_states effort with configured tau_or_i selector"
+                    dataset.attrs["unit"] = "SDK current units; firmware dependent"
+                if name.endswith("_timestamp_us"):
+                    dataset.attrs["clock"] = "unix_epoch"
+                    dataset.attrs["unit"] = "us"
+                if name.endswith("_age_us"):
+                    dataset.attrs["unit"] = "us"
+                    dataset.attrs["definition"] = "host_receive timestamp age at state sample"
+                if name in {"q_cmd_send_ok", "q_leader_valid", "q_follower_valid", "q_follower_valid",
+                            "dq_valid_follower", "ddq_valid_follower", "gripper_follower_valid",
+                            "gripper_cmd_valid"}:
+                    dataset.attrs["unit"] = "boolean"
                 if name.endswith("_valid_leader") or name.endswith("_valid_follower"):
                     dataset.attrs["definition"] = "1 when the corresponding feedback field is a measured report"
                     dataset.attrs["source"] = "arm_state_validity_flag"

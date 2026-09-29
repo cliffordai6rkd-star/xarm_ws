@@ -261,6 +261,29 @@ python gello_teleop/uf_robot_gello_teleop_dual.py \
 需检查电机持续力矩、负载与机械配重。若输出远低于上限却无法保持，应再检查
 位置环参数、工作模式和供电。仅提高 `hold_pwm_by_joint` 不会持续施加更大力矩。
 
+### 交互测试 GELLO J4 的保持输出
+
+如果 J4 在位置保持时下垂，可以使用 `tune_gello_j4_pwm.py` 逐步测试
+`Goal PWM` 上限。这个值不是 Nm 力矩；脚本让 J4 保持当前单圈位置，按 `d`
+每次增加一个小步长，终端实时显示位置误差、实际 PWM、电流和温度，按 `y`
+接受当前值，按 `q` 退出。脚本默认将温度限制在 50°C、电流限制在 0.6A，
+并且不会连接或移动 xArm：
+
+```bash
+python gello_teleop/tune_gello_j4_pwm.py \
+  --config gello_teleop/config/xarm7_gello_teleop_dual_calibrated.yaml \
+  --side left \
+  --output gello_teleop/config/xarm7_gello_teleop_dual_left_j4_tuned.yaml \
+  --step 25
+```
+
+请托住主手、停止其它 GELLO 程序，并为输出文件选择新路径。脚本只操作
+`joint_ids` 中第 4 个电机；最大值取 `min(EEPROM PWM Limit, 885)`，不会修改
+EEPROM。确认后，接受的值会写入输出 YAML 的
+`TeleoperatorConfig.hold_pwm_by_joint[3]`，后续使用该输出配置时会在自动回位
+和对齐的位置保持阶段使用它。遥操正式跟随阶段会释放映射关节力矩，所以这个
+设置不会把 J4 变成 Gello 到 xArm 的力反馈通道。
+
 ### MIT 力矩计算后下发位置
 
 每侧 `TeleoperatorConfig.control_mode` 可设为 `mit_to_position`。该模式仍向
@@ -400,3 +423,62 @@ leader_reset_max_travel_deg: 90.0
 各数组按 J1..J7 排列：Edeg 为实际位置减当前指令，Rdeg 为实际位置减最终参考，
 I_mA 为 XL330 实际电流，PWM 为实际输出。电流/PWM 都不是实测 Nm 力矩。
 宽终端同时显示四组数据，窄终端在相同两行内轮换四组数据；重定向输出只保留最终两行。
+
+## 双臂遥操数采入口
+
+新的入口是 `dual_gello_collect.py`，配置示例为
+`config/xarm7_gello_dual_dataset.yaml`：
+
+```bash
+python -m gello_teleop.dual_gello_collect \
+  -c gello_teleop/config/xarm7_gello_dual_dataset.yaml
+```
+
+该配置引用已经保存 `joint_signs`、`joint_offsets` 和
+`leader_reference_q` 的 calibrated GELLO 文件。没有保存标定时入口会在连接前拒绝，
+不会用当前摆放姿态重新计算 offset。实际顺序固定为：连接检查、两台 xArm 低速到
+`reset_q`、人工摆放 GELLO、显示左右各关节误差并确认、接管遥操。接管后 `r` 开始
+新的 episode，空格停止并保持，`t` 在停止后重新做当前位置检查再接管，`q` 退出。
+
+xArm 控制线程使用 monotonic 100 Hz tick；GELLO 按各自 `fps` 在独立线程读取，控制
+线程只使用最近有效目标的 ZOH。`position_mode: direct` 是带步长和跟踪误差上限的
+位置参考；`second_order` 使用独立参考状态，单位为 rad、rad/s、rad/s²，公式为
+`ddq_ref = clip(kp*(q_target-q_ref)-kd*dq_ref)`，再按真实 dt 积分并限幅。`kp/kd`
+是参考轨迹参数，不是电机刚度或 MIT 力矩参数。
+
+每条 HDF5 状态行按 `left,right` 拼接，包含 `q_follower`、上一条成功下发的
+`q_cmd`、`delta_q`、`dq_follower`、`ddq_follower`、GELLO 原始/映射角、xArm
+反馈力矩/电流及有效性、数据年龄、序号和命令时间。相机保存在
+`cameras/<name>/frames` 和独立 `timestamp_us`，不会复制到 100 Hz。GELLO 过期、
+控制异常或两侧任一命令失败时，两个从臂停止接收新目标。
+配置 `gripper.enabled: true` 后会由各自状态线程读取夹爪宽度；未启用或 SDK 不提供
+夹爪反馈时保存 NaN 和 `gripper_follower_valid=0`，不会用零值冒充状态。
+
+### GELLO 阻尼
+
+`GelloTeleopConfig` 提供可选的 `damping_enabled: true`、`damping_mode: current`、
+`damping_gain`、`damping_brake_gain`、`damping_current_limit`、
+`weak_hold_enabled` 和 `damping_watchdog_ms`。启动时先通过 Dynamixel ping 检查实际
+型号，只允许已知控制表进入电流模式；增益和上限是舵机原始电流单位，未做 Nm 校准。
+`damping_velocity_filter_alpha` 对由实际 host dt 计算的 GELLO 速度做因果一阶滤波。
+纯阻尼在零速度时不抗重力，弱保持参考会在低速稳定后缓慢更新，避免一直拉回启动姿态。
+未知型号会拒绝启用阻尼。默认配置关闭该选项，建议先在单电机、低上限和硬件急停可用的
+条件下确认型号、方向、watchdog 和手感。
+
+## 独立 xArm 关节电流测试
+
+该工具不依赖 GELLO 或相机：
+
+```bash
+python -m xarm_stack.test_joint_current \
+  -c xarm_stack/config/xarm_joint_current_test.yaml \
+  --arm both --duration 30 --output ./current_test.h5
+```
+
+默认只连接和读取，不复位、不运动、不改变位置环；需要固定当前位置时明确加
+`--hold`（同时把配置中的 `execution_enabled` 改为 `true`）。运行中按 `b`、`p`、`l`
+标记 baseline、press、release，`q` 退出。工具调用 SDK 的
+`set_report_tau_or_i(1)` 后只把 `get_joint_states()` 的 `effort` 字段记录为电流；
+退出时按 `restore_feedback_signal` 恢复报告选择。电流不可用时保存 NaN 和有效性标志，
+不会用零值冒充测量，也不会把同一字段同时标成 torque。输出包含 q、dq、current、
+torque、时间戳、阶段和错误状态，并打印相对 baseline 的有符号变化和噪声。

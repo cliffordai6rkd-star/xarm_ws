@@ -9,6 +9,7 @@ or change collision settings.  Motion-changing operations require the explicit
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -54,6 +55,7 @@ class XArmAdapter:
     _feedback_updates: int = field(init=False, default=0)
     _repeated_feedback: int = field(init=False, default=0)
     _command_intervals_s: list[float] = field(init=False, default_factory=list)
+    _io_lock: threading.RLock = field(init=False, default_factory=threading.RLock)
 
     def __post_init__(self) -> None:
         self.name = self.config.name
@@ -139,6 +141,12 @@ class XArmAdapter:
         if not bool(getattr(self._arm, "connected", True)):
             self._arm = None
             raise ConnectionError(f"failed to connect xArm {self.name} at {robot_ip}")
+        timeout_s = float(kwargs.get("sdk_timeout_s", kwargs.get("command_timeout_s", 0.1)))
+        if not np.isfinite(timeout_s) or timeout_s <= 0:
+            raise ValueError("sdk_timeout_s must be positive and finite")
+        set_timeout = getattr(self._arm, "set_timeout", None)
+        if callable(set_timeout):
+            self._check_result(set_timeout(timeout_s), "set_timeout")
         self._last_q = self._last_dq = None
         self._last_t = None
         self._feedback_available = False
@@ -251,7 +259,11 @@ class XArmAdapter:
         acceleration = float(self.config.config_kwargs.get("joint_acc_rad_s2", 5.0))
         api = str(self.config.config_kwargs.get("servo_api", "set_servo_angle_j"))
         if api == "set_servo_angle_j" and callable(getattr(arm, "set_servo_angle_j", None)):
-            result = self._call("set_servo_angle_j", angle=q.tolist(), speed=speed, mvacc=acceleration, is_radian=True, wait=False, required=True)
+            # xArm's Mode 1 API names this argument ``angles``.  The SDK
+            # documents speed/mvacc as reserved for this endpoint, so the
+            # follower's own q/dq/acceleration limits are the effective
+            # safety limits for this path.
+            result = self._call("set_servo_angle_j", angles=q.tolist(), is_radian=True, wait=False, required=True)
         elif api in {"set_servo_angle_j", "set_servo_angle"}:
             result = self._call("set_servo_angle", angle=q.tolist(), speed=speed, mvacc=acceleration, is_radian=True, wait=False, required=True)
         else:
@@ -284,6 +296,22 @@ class XArmAdapter:
         result = self._call("set_servo_angle", angle=q.tolist(), is_radian=True, wait=True, required=True)
         self._check_result(result, "set_servo_angle")
         self._last_commanded_q, self._last_command_timestamp_us = q.copy(), now_us()
+
+    def move_to_reset(self, q: np.ndarray, *, speed: float, acceleration: float) -> None:
+        """Low-speed reset motion used by the GELLO takeover state machine."""
+        self._require_arm()
+        self._require_execution("move_to_reset")
+        if not self._enabled:
+            raise RuntimeError(f"xArm {self.name} must be enabled before reset motion")
+        q = self._validate_vector(q, "q")
+        result = self._call(
+            "set_servo_angle",
+            angle=q.tolist(), speed=float(speed), mvacc=float(acceleration),
+            is_radian=True, wait=False, required=True,
+        )
+        self._check_result(result, "move_to_reset")
+        self._last_commanded_q = q.copy()
+        self._last_command_timestamp_us = now_us()
 
     def wait_motion_done(self, timeout_s: float, poll_interval_s: float = 0.1) -> bool:
         self._require_arm()
@@ -343,12 +371,16 @@ class XArmAdapter:
     def _read_feedback(self, arm: Any, q: np.ndarray, dt: float | None) -> tuple[np.ndarray, np.ndarray, np.ndarray, bool]:
         del q
         report = self._call("get_joint_states", is_radian=True, required=False)
-        velocity = _extract_named_or_indexed(report, ("velocity", "vel", "speeds"), 1, self.dof)
+        # Public xArm SDK format is (code, [position, velocity, effort]).
+        # ``effort`` is selected by set_report_tau_or_i(): it is either a
+        # torque report or a motor-current report, never both at once.
+        velocity = _extract_joint_state_component(report, 1, self.dof)
         signal = str(self.config.config_kwargs.get("feedback_signal", "none")).lower()
         if signal not in {"none", "torque", "current"}:
             raise ValueError("feedback_signal must be none, torque, or current")
-        torque = _extract_named_or_indexed(report, ("torque", "effort", "efforts"), 2, self.dof) if signal == "torque" else None
-        current = _extract_named_or_indexed(report, ("current", "currents", "iq"), 5, self.dof) if signal == "current" else None
+        effort = _extract_joint_state_component(report, 2, self.dof)
+        torque = effort if signal == "torque" else None
+        current = effort if signal == "current" else None
         self._velocity_valid, self._torque_valid, self._current_valid = velocity is not None, torque is not None, current is not None
         if velocity is None:
             velocity = np.zeros(self.dof, dtype=np.float64)
@@ -376,13 +408,14 @@ class XArmAdapter:
         return pose6_to_matrix(pose)
 
     def _call(self, name: str, *args: Any, required: bool = False, **kwargs: Any) -> Any:
-        arm = self._require_arm()
-        fn = getattr(arm, name, None)
-        if not callable(fn):
-            if required:
-                raise RuntimeError(f"installed xArm SDK does not expose {name}()")
-            return None
-        return fn(*args, **kwargs)
+        with self._io_lock:
+            arm = self._require_arm()
+            fn = getattr(arm, name, None)
+            if not callable(fn):
+                if required:
+                    raise RuntimeError(f"installed xArm SDK does not expose {name}()")
+                return None
+            return fn(*args, **kwargs)
 
     def _require_arm(self) -> Any:
         if self._arm is None:
@@ -488,6 +521,35 @@ def _extract_named_or_indexed(value: Any, names: tuple[str, ...], index: int, le
         value = value[1]
     if isinstance(value, (list, tuple)) and len(value) > index:
         return _extract_vector(value[index], length)
+    return None
+
+
+def _extract_joint_state_component(value: Any, component: int, length: int) -> np.ndarray | None:
+    """Extract one component from the SDK's ``get_joint_states`` report.
+
+    A few test doubles and wrappers expose a dict/object instead of the public
+    tuple.  Those forms are accepted, but arbitrary list positions outside the
+    documented ``[q, dq, effort]`` payload are deliberately ignored.
+    """
+    if value is None:
+        return None
+    if isinstance(value, tuple) and len(value) == 2 and isinstance(value[0], (int, np.integer)):
+        code, payload = int(value[0]), value[1]
+        if code != 0:
+            return None
+        value = payload
+    if isinstance(value, dict):
+        names = (("position", "positions", "q") if component == 0 else
+                 ("velocity", "vel", "dq") if component == 1 else
+                 ("effort", "torque", "current", "iq"))
+        for name in names:
+            if name in value:
+                candidate = _extract_vector(value[name], length)
+                if candidate is not None:
+                    return candidate
+        return None
+    if isinstance(value, (list, tuple)) and len(value) > component:
+        return _extract_vector(value[component], length)
     return None
 
 

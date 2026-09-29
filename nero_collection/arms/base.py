@@ -108,6 +108,10 @@ class ArmInterface(Protocol):
     def move_joints(self, q: np.ndarray) -> None:
         ...
 
+    def move_to_reset(self, q: np.ndarray, *, speed: float, acceleration: float) -> None:
+        """Low-speed reset motion used before takeover."""
+        ...
+
     def wait_motion_done(self, timeout_s: float, poll_interval_s: float = 0.1) -> bool:
         ...
 

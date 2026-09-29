@@ -170,3 +170,22 @@ xArm SDK 默认只读；只有 endpoint 显式设置 `execution_enabled: true` �
 - [UFACTORY 协作机械臂](https://www.ufactory.cc/xarm-collaborative-robot/)
 - [LuMos FastUMI](https://www.fastumi.com/)
 - [GELLO: 通用低成本遥操作框架](https://wuphilipp.github.io/gello_site/)
+
+
+- [dual_gello_collect.py](/home/rei/mnt/code/xarm_ws/gello_teleop/dual_gello_collect.py)：双臂连接、低速复位、人工对齐、接管、100 Hz 位置控制、ZOH、episode 采集。
+- [xarm7_gello_dual_dataset.yaml](/home/rei/mnt/code/xarm_ws/gello_teleop/config/xarm7_gello_dual_dataset.yaml)：双臂配置。
+- [test_joint_current.py](/home/rei/mnt/code/xarm_ws/xarm_stack/test_joint_current.py)：独立电流观测、阶段标记、HDF5/CSV/PNG 输出。
+- [xarm_joint_current_test.yaml](/home/rei/mnt/code/xarm_ws/xarm_stack/config/xarm_joint_current_test.yaml)：电流测试配置。
+- 修复 xArm set_servo_angle_j(angles=...) 参数。
+- 按 SDK 真实格式解析 get_joint_states()；effort 根据 set_report_tau_or_i(0/1) 分别记录为 torque 或 current。
+- 增加 GELLO 型号探测、电流阻尼、速度滤波、输出限幅、弱保持和 watchdog。
+- HDF5 增加双臂关节、命令时间、序号、数据年龄、dq/ddq、有效性、反馈来源、相机时间轴和统计信息。
+运行：
+python -m gello_teleop.dual_gello_collect \
+  -c gello_teleop/config/xarm7_gello_dual_dataset.yaml
+流程为连接检查 → xArm 复位 → GELLO 人工对齐 → 对齐确认 → 接管；接管后按 r 采集，空格停止并选择保存/丢弃，t 重新检查后接管，q 退出。
+电流测试：
+python -m xarm_stack.test_joint_current \
+  -c xarm_stack/config/xarm_joint_current_test.yaml \
+  --arm both --duration 30 --output current_test.h5
+默认不运动；需要当前位置保持时增加 --hold，并将对应 execution_enabled 改为 true。运行中 b/p/l 标记 baseline、press、release。

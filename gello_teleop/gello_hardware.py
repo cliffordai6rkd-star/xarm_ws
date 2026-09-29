@@ -6,6 +6,34 @@ import time
 import numpy as np
 
 
+# Control-table variants are selected from the model number returned by
+# Dynamixel ping.  A damping request for an unknown model is rejected instead
+# of silently applying an XL/XM register map to a different servo.
+_KNOWN_CURRENT_MODELS = {
+    1000: "XH430-W350",
+    1010: "XH430-W210",
+    1020: "XM430-W350",
+    1030: "XM430-W210",
+    1040: "XH430-V350",
+    1050: "XH430-V210",
+    1190: "XL330-M077",
+    1200: "XL330-M288",
+    1210: "XC330-T181",
+    1220: "XC330-T288",
+    1230: "XC330-M181",
+    1240: "XC330-M288",
+}
+_CURRENT_TABLE = {
+    "operating_mode": 11,
+    "current_limit": 38,
+    "torque_enable": 64,
+    "watchdog": 98,
+    "goal_current": 102,
+    "present_velocity": 128,
+    "velocity_unit_rad_s": 0.229 * 2 * math.pi / 60.0,
+}
+
+
 def check(code, operation):
     if code != 0:
         raise RuntimeError(f"{operation} failed (code={code})")
@@ -39,6 +67,7 @@ class GelloReader:
         self.held_ids = []
         self.lock = threading.Lock()
         self.closed = False
+        self.model_numbers = {}
         try:
             if not self.port.openPort():
                 raise ConnectionError(f"Cannot open GELLO port: {config.port}")
@@ -59,6 +88,120 @@ class GelloReader:
             if self.port.ser is not None:
                 self.port.closePort()
             raise
+
+    def detect_capabilities(self):
+        """Return model-gated capabilities without changing servo state."""
+        with self.lock:
+            if self.closed:
+                raise RuntimeError('GELLO port is closed')
+            result = {}
+            for motor_id in self.config.joint_ids:
+                model = None
+                try:
+                    value = self.packet.ping(self.port, motor_id)
+                    if isinstance(value, tuple):
+                        # Dynamixel SDK returns (model_number, comm_result,
+                        # packet_error), but accept wrappers that return just
+                        # the model number.
+                        if len(value) >= 3:
+                            model, comm, error = value[:3]
+                            check(comm, f'Dynamixel {motor_id} ping')
+                            check(error, f'Dynamixel {motor_id} ping device error')
+                        elif value:
+                            model = value[0]
+                    else:
+                        model = value
+                except Exception as exc:
+                    result[motor_id] = {'model_number': None, 'model_name': None,
+                                        'current_control': False, 'error': str(exc)}
+                    continue
+                model = int(model) if model is not None else None
+                self.model_numbers[motor_id] = model
+                result[motor_id] = {
+                    'model_number': model,
+                    'model_name': _KNOWN_CURRENT_MODELS.get(model),
+                    'current_control': model in _KNOWN_CURRENT_MODELS,
+                }
+            return result
+
+    def enable_current_damping(self, config):
+        """Switch configured joints to model-supported current control.
+
+        Gains and limits are in the servo's raw current units.  This method
+        never describes them as Nm and refuses to proceed until every selected
+        servo has a recognized model and the configured vectors match.
+        """
+        if str(getattr(config, 'damping_mode', 'none')).lower() != 'current':
+            return {'enabled': False, 'reason': 'damping_mode_is_not_current'}
+        capabilities = self.detect_capabilities()
+        unsupported = [i for i, value in capabilities.items() if not value.get('current_control')]
+        if unsupported:
+            raise RuntimeError(f'GELLO current damping unsupported for motor IDs {unsupported}; '
+                               'configure the exact Dynamixel model/control table first')
+        n = len(self.config.joint_ids)
+        gains = np.asarray(getattr(config, 'damping_gain', None), dtype=float)
+        limits = np.asarray(getattr(config, 'damping_current_limit', None), dtype=int)
+        if gains.shape != (n,) or limits.shape != (n,) or np.any(gains < 0) or np.any(limits <= 0):
+            raise ValueError('damping_gain and damping_current_limit must contain one positive value per joint')
+        watchdog_ms = int(getattr(config, 'damping_watchdog_ms', 100))
+        if watchdog_ms <= 0 or watchdog_ms > 5100 or watchdog_ms % 20:
+            raise ValueError('damping_watchdog_ms must be a positive multiple of 20 up to 5100')
+        with self.lock:
+            for motor_id in self.config.joint_ids:
+                self._write(motor_id, _CURRENT_TABLE['torque_enable'], 0)
+                self._write(motor_id, _CURRENT_TABLE['operating_mode'], 0)
+                self._write(motor_id, _CURRENT_TABLE['current_limit'], int(limits[list(self.config.joint_ids).index(motor_id)]), size=2)
+                self._write(motor_id, _CURRENT_TABLE['watchdog'], watchdog_ms // 20)
+                self._write(motor_id, _CURRENT_TABLE['torque_enable'], 1)
+        return {'enabled': True, 'models': capabilities, 'unit': 'raw_current',
+                'watchdog_ms': watchdog_ms}
+
+    def write_current_damping(self, current):
+        values = np.asarray(current, dtype=float).reshape(len(self.config.joint_ids))
+        if not np.isfinite(values).all():
+            raise ValueError('damping current contains non-finite values')
+        with self.lock:
+            for motor_id, value in zip(self.config.joint_ids, values):
+                self._write(motor_id, _CURRENT_TABLE['goal_current'], int(np.clip(np.rint(value), -32768, 32767)) & 0xffff, size=2)
+
+    @staticmethod
+    def compute_damping_current(mapped, previous_mapped, dt, config, hold_reference=None, previous_velocity=None):
+        """Compute bounded raw-current damping from mapped joint velocity."""
+        mapped = np.asarray(mapped, dtype=float)
+        previous = mapped if previous_mapped is None else np.asarray(previous_mapped, dtype=float)
+        dt = max(float(dt), 1e-4)
+        raw_dq = (mapped - previous) / dt
+        alpha = float(np.clip(getattr(config, 'damping_velocity_filter_alpha', 1.0), 1e-6, 1.0))
+        dq = raw_dq if previous_velocity is None else alpha * raw_dq + (1.0 - alpha) * np.asarray(previous_velocity, dtype=float)
+        gain = np.asarray(config.damping_gain, dtype=float)
+        brake = np.asarray(config.damping_brake_gain or [0.0] * mapped.size, dtype=float)
+        limit = np.asarray(config.damping_current_limit, dtype=float)
+        current = -gain * dq
+        current += -brake * np.sign(dq) * np.maximum(np.abs(dq) - float(config.damping_velocity_threshold), 0.0)
+        reference = mapped if hold_reference is None else np.asarray(hold_reference, dtype=float)
+        if bool(config.weak_hold_enabled):
+            weak = np.asarray(config.weak_hold_gain, dtype=float) * (reference - mapped)
+            weak_limit = np.asarray(config.weak_hold_limit, dtype=float)
+            current += np.clip(weak, -weak_limit, weak_limit)
+        if current.shape != mapped.shape or limit.shape != mapped.shape:
+            raise ValueError('damping vectors must match the mapped GELLO joints')
+        return np.clip(current, -limit, limit)
+
+    def disable_current_damping(self):
+        with self.lock:
+            for motor_id in self.config.joint_ids:
+                try:
+                    self._write(motor_id, _CURRENT_TABLE['goal_current'], 0, size=2)
+                    self._write(motor_id, _CURRENT_TABLE['torque_enable'], 0)
+                    # Leave the control table in position mode so a later
+                    # alignment/hold operation cannot accidentally write a
+                    # position goal while the servo is still in current mode.
+                    self._write(motor_id, _CURRENT_TABLE['operating_mode'], 3)
+                except Exception:
+                    # Cleanup must still close the port after a disconnected
+                    # servo; the original communication error is logged by the
+                    # caller.
+                    pass
 
     def read(self, reset_feedback=False):
         with self.lock:

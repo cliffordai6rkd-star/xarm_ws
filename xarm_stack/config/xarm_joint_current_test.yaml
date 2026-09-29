@@ -1,0 +1,16 @@
+# Edit robot_ip and execution_enabled before using --hold.  Without --hold the
+# tool only connects and reads feedback; it does not move or reset an arm.
+sample_rate_hz: 100.0
+arms:
+  left:
+    robot_ip: 192.168.1.203
+    dof: 7
+    execution_enabled: false
+    feedback_signal: current
+    restore_feedback_signal: torque
+  right:
+    robot_ip: 192.168.1.196
+    dof: 7
+    execution_enabled: false
+    feedback_signal: current
+    restore_feedback_signal: torque

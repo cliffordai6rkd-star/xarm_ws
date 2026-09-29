@@ -89,6 +89,38 @@ def test_command_updates_held_value_only_after_success(adapter):
     FakeArm.command_code = 0
     adapter.command_joint_positions(target)
     np.testing.assert_allclose(adapter.last_commanded_q, target)
+    call = next(call for call in reversed(FakeArm.calls) if call[0] == "set_servo_angle_j")
+    assert "angles" in call[2]
+    assert "angle" not in call[2]
+
+
+def test_joint_state_effort_is_current_only_when_selected(monkeypatch):
+    class CurrentArm(FakeArm):
+        def set_report_tau_or_i(self, selector):
+            self.calls.append(("set_report_tau_or_i", selector))
+            return 0
+
+        def get_joint_states(self, **kwargs):
+            return 0, [[0.0] * 6, [0.1] * 6, [2.0] * 6]
+
+    package = types.ModuleType("xarm")
+    wrapper = types.ModuleType("xarm.wrapper")
+    wrapper.XArmAPI = CurrentArm
+    monkeypatch.setitem(sys.modules, "xarm", package)
+    monkeypatch.setitem(sys.modules, "xarm.wrapper", wrapper)
+    from ufactory_devices.robot.xarm_adapter import XArmAdapter
+
+    value = XArmAdapter(ArmEndpointConfig(
+        name="current",
+        rest_q=(0.0,) * 6,
+        config_kwargs={"robot_ip": "127.0.0.1", "dof": 6, "execution_enabled": True,
+                       "feedback_signal": "current"},
+    ))
+    value.connect()
+    value.enable()
+    state = value.read_state()
+    assert state.current_valid and not state.torque_valid
+    np.testing.assert_allclose(state.current, 2.0)
 
 
 def test_gripper_service_starts_without_enabling_hardware(monkeypatch):

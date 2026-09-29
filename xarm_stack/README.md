@@ -48,3 +48,33 @@ The feedback path applies calibration, filtering and limits to a Gello torque
 request. The xArm follower receives joint position targets only. Its public
 SDK adapter rejects Nero-style MIT/torque commands by default, so this is not
 Nero MIT control. No physical force-feedback loop has been validated here.
+
+## Dual GELLO dataset pipeline and current diagnostic
+
+The dedicated dual-arm entry owns independent GELLO reader threads and a
+100 Hz xArm position-control thread:
+
+```bash
+python -m gello_teleop.dual_gello_collect \
+  -c gello_teleop/config/xarm7_gello_dual_dataset.yaml
+```
+
+It checks both connections, moves both xArms slowly to `reset_q`, waits for
+manual GELLO placement and per-joint alignment confirmation, then takes over.
+Press `r` to start an episode, Space to stop and hold, `t` to recheck the
+current pose before taking over again, and `q` to exit. `q_cmd` is the most
+recent target that the SDK call actually accepted at each state sample.
+
+The independent current diagnostic does not use GELLO or cameras:
+
+```bash
+python -m xarm_stack.test_joint_current \
+  -c xarm_stack/config/xarm_joint_current_test.yaml \
+  --arm both --duration 30 --output current_test.h5
+```
+
+After selecting `set_report_tau_or_i(1)`, it records the SDK
+`get_joint_states()` effort field as current. Use `b`, `p`, and `l` for
+baseline, press, and release. `--hold` is required to enable a position hold;
+otherwise the tool does not move or reset the arm. Feedback channels are saved
+separately with validity flags and the configured selector is restored on exit.

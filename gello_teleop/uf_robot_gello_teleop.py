@@ -80,6 +80,21 @@ class GelloTeleopConfig:
     # position-mode driver keeps the leader at its reference pose.
     hold_pwm: Optional[int] = None
     hold_pwm_by_joint: Optional[Tuple[int, ...]] = None
+    # Optional, model-gated GELLO damping.  Values are Dynamixel current
+    # command units; they are deliberately not labelled Nm without a motor
+    # calibration.  The reader refuses unknown servo models.
+    damping_enabled: bool = False
+    damping_mode: str = 'none'  # none or current
+    damping_gain: Optional[Tuple[float, ...]] = None  # raw current/(rad/s)
+    damping_brake_gain: Optional[Tuple[float, ...]] = None
+    damping_current_limit: Optional[Tuple[int, ...]] = None
+    damping_velocity_threshold: float = 1.0  # rad/s
+    damping_velocity_filter_alpha: float = 0.35
+    weak_hold_enabled: bool = False
+    weak_hold_gain: Optional[Tuple[float, ...]] = None  # raw current/rad
+    weak_hold_limit: Optional[Tuple[int, ...]] = None
+    weak_hold_release_velocity: float = 0.08
+    damping_watchdog_ms: int = 100
 
 
 def positive(value, name):
@@ -138,6 +153,32 @@ def validate(robot, leader):
         len(leader.hold_pwm_by_joint) != n or any(type(x) is not int or x < 0 for x in leader.hold_pwm_by_joint)
     ):
         raise ValueError('hold_pwm_by_joint must contain non-negative integers per mapped joint')
+    if leader.damping_mode not in ('none', 'current'):
+        raise ValueError('damping_mode must be none or current')
+    if leader.damping_enabled and leader.damping_mode == 'current':
+        for name in ('damping_gain', 'damping_brake_gain', 'damping_current_limit'):
+            value = getattr(leader, name)
+            if value is None or len(value) != n or not np.isfinite(value).all():
+                raise ValueError(f'{name} must contain {n} finite values when current damping is enabled')
+        if np.any(np.asarray(leader.damping_gain) < 0) or np.any(np.asarray(leader.damping_brake_gain) < 0):
+            raise ValueError('damping gains must be non-negative')
+        if any(int(x) <= 0 for x in leader.damping_current_limit):
+            raise ValueError('damping_current_limit must be positive')
+        if leader.weak_hold_enabled:
+            for name in ('weak_hold_gain', 'weak_hold_limit'):
+                value = getattr(leader, name)
+                if value is None or len(value) != n or not np.isfinite(value).all():
+                    raise ValueError(f'{name} must contain {n} finite values when weak hold is enabled')
+            if np.any(np.asarray(leader.weak_hold_gain) < 0):
+                raise ValueError('weak_hold_gain must be non-negative')
+            if np.any(np.asarray(leader.weak_hold_limit) <= 0):
+                raise ValueError('weak_hold_limit must be positive')
+        positive(leader.damping_velocity_threshold, 'damping_velocity_threshold')
+        if not np.isfinite(leader.damping_velocity_filter_alpha) or not 0.0 < leader.damping_velocity_filter_alpha <= 1.0:
+            raise ValueError('damping_velocity_filter_alpha must be in (0, 1]')
+        positive(leader.weak_hold_release_velocity, 'weak_hold_release_velocity')
+        if type(leader.damping_watchdog_ms) is not int or leader.damping_watchdog_ms <= 0 or leader.damping_watchdog_ms % 20:
+            raise ValueError('damping_watchdog_ms must be a positive multiple of 20')
     for obj, names in ((robot, ('robot_speed', 'robot_acc', 'reset_speed', 'reset_acc',
                                'reset_timeout', 'reset_tolerance', 'command_timeout')),
                        (leader, ('fps', 'baudrate', 'read_timeout', 'watchdog_timeout',
@@ -553,6 +594,14 @@ class Session:
         # Release alignment/reset holding before accepting operator motion.
         # Explicitly configured unmapped fixed joints remain energized.
         for reader in self.readers:
+            # A configured current-damping leader must stay energized after
+            # takeover.  The dedicated dual dataset pipeline updates its
+            # current command from the independent GELLO reader thread.  The
+            # legacy zero-force path keeps its historical torque-off behavior.
+            if (bool(getattr(reader.config, 'damping_enabled', False)) and
+                    str(getattr(reader.config, 'damping_mode', 'none')).lower() == 'current'):
+                reader.enable_current_damping(reader.config)
+                continue
             released_ids = list(reader.config.joint_ids)
             if reader.config.gripper_id >= 0:
                 released_ids.append(reader.config.gripper_id)
@@ -567,6 +616,9 @@ class Session:
         def worker(i):
             arm, reader, mapper = self.arms[i], self.readers[i], self.mappers[i]
             controller = self.controllers[i]
+            damping_previous_q = None
+            damping_velocity = None
+            damping_reference_q = None
             period = 1 / mapper.config.fps
             previous = time.monotonic() - period
             deadline = time.monotonic()
@@ -577,6 +629,20 @@ class Session:
                     arm.health(active=True)
                     raw = reader.read()
                     q, _ = mapper.target(raw)
+                    now = time.monotonic()
+                    if (bool(getattr(reader.config, 'damping_enabled', False)) and
+                            str(getattr(reader.config, 'damping_mode', 'none')).lower() == 'current'):
+                        if damping_reference_q is None:
+                            damping_reference_q = q.copy()
+                        damping_current = reader.compute_damping_current(
+                            q, damping_previous_q, max(now - previous, 1e-4), reader.config,
+                            damping_reference_q, damping_velocity,
+                        )
+                        reader.write_current_damping(damping_current)
+                        raw_dq = np.zeros_like(q) if damping_previous_q is None else (q - damping_previous_q) / max(now - previous, 1e-4)
+                        alpha = float(getattr(reader.config, 'damping_velocity_filter_alpha', 1.0))
+                        damping_velocity = raw_dq if damping_velocity is None else alpha * raw_dq + (1.0 - alpha) * damping_velocity
+                        damping_previous_q = q.copy()
                     arm.check_target(q)  # check the raw target, before slew limiting
                     measured_q = arm.joints() if first or controller is not None else None
                     if first:
@@ -594,7 +660,6 @@ class Session:
                                 f'允许={np.rad2deg(tolerance):.2f}°；'
                                 '夹爪初始化及释放主手力矩后的首帧检查未通过，请托稳主手；不会重算零点'
                             )
-                    now = time.monotonic()
                     action = mapper.action(raw, now - previous)
                     previous = now
                     if controller is not None:

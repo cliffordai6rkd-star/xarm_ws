@@ -1,0 +1,56 @@
+# Unified entry for gello_teleop.dual_gello_collect.
+# Keep the calibrated offsets in the referenced GELLO file.  This file never
+# infers offsets from a live pose.
+gello_config: xarm7_gello_teleop_dual_calibrated.yaml
+
+alignment:
+  reset_speed_rad_s: 0.20
+  reset_acc_rad_s2: 0.50
+  reset_timeout_s: 60.0
+  reset_tolerance_rad: 0.03
+  reset_samples: 5
+  alignment_tolerance_rad: 0.05
+
+control:
+  sample_rate_hz: 100.0
+  leader_max_age_s: 0.15
+  state_max_age_s: 0.15
+  ddq_filter_alpha: 1.0
+  sample_queue_size: 256
+  maximum_lateness_s: 0.03
+  # direct sends a bounded position reference; second_order integrates its
+  # own q_ref/dq_ref with the formula documented in README_ZH.md.
+  position_mode: direct
+  kp: 18.0
+  kd: 3.0
+  max_velocity_rad_s: 1.5
+  max_acceleration_rad_s2: 8.0
+  max_step_rad: 0.08
+  max_tracking_error_rad: 0.25
+  joint_speed_rad_s: 1.0
+  joint_acc_rad_s2: 5.0
+  sdk_timeout_s: 0.1
+
+arms:
+  left:
+    execution_enabled: true
+    servo_mode: 1
+    feedback_signal: torque
+    velocity_source: hardware
+  right:
+    execution_enabled: true
+    servo_mode: 1
+    feedback_signal: torque
+    velocity_source: hardware
+
+output:
+  directory: ./episodes
+  prefix: dual_gello
+  discard_initial_s: 0.0
+
+gripper:
+  enabled: false
+
+# Empty by default.  Camera acquisition is asynchronous and each camera keeps
+# its own timestamp_us timeline when entries are added here.
+cameras: []
