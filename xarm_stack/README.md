@@ -51,6 +51,22 @@ Nero MIT control. No physical force-feedback loop has been validated here.
 
 ## Dual GELLO dataset pipeline and current diagnostic
 
+Collection configs enable a separate measured / URDF theoretical torque window
+with seven rows and two columns per active arm, in Nm. The model directly calls
+RNEA with q, dq and low-pass-filtered ddq. Acceleration is derived from velocity
+feedback and filtered at `torque_visualization.acceleration_cutoff_hz` before
+RNEA; there is no additional low-pass on the theoretical torque. Measured torque
+is independently filtered at `torque_visualization.measured_torque_cutoff_hz`.
+Both cutoffs default to 3 Hz and can be overridden per arm. Missing motion
+components leave the model curve blank. The H5 keeps original measured torque.
+The default URDF uses the official
+`xarm7_type7_HT_BR2` inertial parameters (10.4315 kg moving links). Tool mass
+and flange-frame CoM are read from the SDK TCP load report; without a supplied
+rotational tensor the tool is represented as a point mass. Use `--left`, `--right`, or
+`--both` to select arms and their wrist cameras. Install
+`matplotlib>=3.7` and `pin>=3,<4`; use `--no-torque-plot` for headless collection.
+See [configuration and model limitations](../gello_teleop/README_ZH.md#双臂遥操数采入口).
+
 The dedicated dual-arm entry owns independent GELLO reader threads and a
 100 Hz xArm position-control thread:
 

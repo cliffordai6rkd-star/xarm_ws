@@ -8,7 +8,7 @@ from gello_teleop.gello_hardware import GelloReader
 from nero_collection.arms.base import ArmState
 
 
-CONFIG = "gello_teleop/config/teleop/xarm7_gello_dual_dataset.yaml"
+CONFIG = "gello_teleop/config/xarm7_gello_dual_dataset.yaml"
 
 
 class FakeArm:
@@ -324,6 +324,60 @@ def test_fault_exit_holds_in_place_without_reset_or_disable(monkeypatch):
     assert all(arm._enabled and arm.mode == 0 for arm in pipeline.arms)
 
 
+def test_controller_fault_exit_retains_protection_and_holds_other_arm(monkeypatch, caplog):
+    import gello_teleop.dual_gello_collect as collect
+    from ufactory_devices.robot.xarm_adapter import XArmControllerFault
+    pipeline, events = exit_pipeline()
+    def fault(**_kwargs):
+        pipeline.state = 'following'
+        for arm in pipeline.arms:
+            arm.enable()
+        error = XArmControllerFault('left', 31, operation='set_servo_angle_j', api_code=1)
+        def protected_hold(**_kwargs):
+            events.append(('left', 'protected_stop'))
+            raise error
+        monkeypatch.setattr(pipeline.arms[0], 'hold_position', protected_hold)
+        pipeline.control_error = error
+        pipeline.stop_event.set()
+        pipeline.poll()
+    monkeypatch.setattr(collect, 'DualGelloPipeline', lambda _: pipeline)
+    monkeypatch.setattr(pipeline, 'interactive', fault)
+    assert collect.main(['-c', CONFIG]) == 1
+    assert not any(event[1] == 'reset' for event in events)
+    assert [event[:2] for event in events if event[1] in {'protected_stop', 'hold'}] == [
+        ('left', 'protected_stop'), ('right', 'hold')]
+    assert 'C31' in caplog.text and 'SDK API code 1' in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)
+
+
+def test_sampling_failure_retains_primary_controller_fault(monkeypatch):
+    import gello_teleop.dual_gello_collect as collect
+    from ufactory_devices.robot.xarm_adapter import XArmControllerFault
+    from unittest.mock import Mock
+    pipeline = make_pipeline()
+    error = XArmControllerFault('left', 31, api_code=1)
+    pipeline.control_error = error
+    monkeypatch.setattr(collect.FixedRateTicker, 'wait', Mock(side_effect=RuntimeError('feedback unavailable')))
+    pipeline._sampling_loop()
+    assert pipeline.control_error is error
+    assert pipeline.stop_event.is_set() and pipeline.sampling_stop.is_set()
+
+
+def test_collision_config_reaches_active_adapters_and_recorded_metadata():
+    pipeline = make_pipeline()
+    pipeline.control['collision_sensitivity'] = 3
+    pipeline.raw['arms']['left']['collision_sensitivity'] = 1
+    pipeline.raw['arms']['right']['collision_sensitivity'] = None
+    collection = pipeline._make_collection_config()
+    for (side, robot, _), pair, expected in zip(pipeline.configs, collection.teleop.master_slave, [1, None]):
+        adapter = pipeline._default_arm_factory(side, robot)
+        assert adapter.config.config_kwargs['collision_sensitivity'] == expected
+        assert pair.follower.config_kwargs['collision_sensitivity'] == expected
+    del pipeline.raw['arms']['left']['collision_sensitivity']
+    side, robot, _ = pipeline.configs[0]
+    assert pipeline._default_arm_factory(side, robot).config.config_kwargs['collision_sensitivity'] == 3
+
+
 def test_keyboard_interrupt_during_connect_does_not_enable_or_reset(monkeypatch):
     import gello_teleop.dual_gello_collect as collect
     pipeline, events = exit_pipeline()
@@ -365,6 +419,9 @@ def test_full_pipeline_saves_cameras_grippers_and_causal_joint_commands(tmp_path
     from scripts.smoke_dual_gello_pipeline import run_smoke
     import yaml
     source = yaml.safe_load(open(CONFIG))
+    source['active_arms'] = ['left', 'right']
+    source['cameras'] = [dict(name=f'{owner} wrist', backend='mock', width=64, height=48,
+                             fps=30, output_size=[224, 224]) for owner in ('left', 'right')]
     source['gripper']['mode'] = 'follow'
     config = tmp_path/'follow.yaml'
     config.write_text(yaml.safe_dump(source))
@@ -379,7 +436,7 @@ def test_full_pipeline_saves_cameras_grippers_and_causal_joint_commands(tmp_path
 def test_gripper_command_fault_stops_all_control(tmp_path):
     import yaml
     from scripts.smoke_dual_gello_pipeline import SimulatedArm, SimulatedLeader, ROOT, write_simulation_config
-    cfg = yaml.safe_load(write_simulation_config(ROOT/'gello_teleop/config/teleop/xarm7_gello_dual_dataset.yaml', tmp_path).read_text())
+    cfg = yaml.safe_load(write_simulation_config(ROOT/'gello_teleop/config/xarm7_gello_dual_dataset.yaml', tmp_path).read_text())
     cfg['gripper']['mode'] = 'follow'
     cfg['cameras'] = []
     path = tmp_path/'fault.yaml'
@@ -1093,6 +1150,9 @@ def test_pipeline_creates_one_visualizer_for_selected_cameras(tmp_path):
     from scripts.smoke_dual_gello_pipeline import write_simulation_config
     path = write_simulation_config(CONFIG, tmp_path)
     data = yaml.safe_load(path.read_text())
+    data['active_arms'] = ['left', 'right']
+    data.setdefault('cameras', [dict(name=f'{owner} wrist', backend='mock', width=64,
+                                    height=48, fps=30) for owner in ('left', 'right')])
     data['gripper']['mode'] = 'follow'
     for camera in data['cameras']:
         camera['visualize'] = True
@@ -1216,7 +1276,8 @@ def test_gripper_absolute_opening_is_repeatable_and_releases_back_to_open():
         stop.set(); worker.thread.join(timeout=1.)
 
 
-def test_interactive_recording_only_r_and_space_change_episode_state():
+@pytest.mark.parametrize('stop_key', [' ', '\r', '\n'])
+def test_interactive_recording_r_starts_and_enter_or_space_stops(stop_key, capsys):
     from unittest.mock import Mock, patch
     pipeline = DualGelloPipeline.__new__(DualGelloPipeline)
     pipeline.state = 'following'
@@ -1226,8 +1287,9 @@ def test_interactive_recording_only_r_and_space_change_episode_state():
     def start():
         pipeline.recording = True
         pipeline.state = 'recording'
-    def stop(save, index):
+    def stop(save, index, *, background=False):
         assert save is True and pipeline.recording
+        assert background
         pipeline.recording = False
         pipeline.state = 'following'
         return None
@@ -1242,15 +1304,55 @@ def test_interactive_recording_only_r_and_space_change_episode_state():
     pipeline.freeze_following = Mock(side_effect=hold)
     pipeline.reset_and_hold = Mock(side_effect=hold)
     pipeline.realign_and_takeover = Mock(side_effect=takeover)
-    keys = Mock(is_tty=True); keys.read_key.side_effect = ['r', 'F', 'o', 't', ' ', 'q']
+    keys = Mock(is_tty=True); keys.read_key.side_effect = ['r', 'F', 'o', 't', stop_key, 'q']
     context = Mock(); context.__enter__ = Mock(return_value=keys); context.__exit__ = Mock(return_value=False)
     with patch('gello_teleop.dual_gello_collect.TerminalKeys', return_value=context):
         assert pipeline.interactive() == 0
     pipeline.start_episode.assert_called_once()
-    pipeline.stop_episode.assert_called_once_with(True, None)
+    pipeline.stop_episode.assert_called_once_with(True, None, background=True)
     pipeline.freeze_following.assert_called_once()
     pipeline.reset_and_hold.assert_called_once_with(keys)
     pipeline.realign_and_takeover.assert_called_once_with(keys)
+    assert '停止录制，正在保存 episode' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('stop_key', [' ', '\r', '\n'])
+def test_stop_key_prints_when_no_episode_is_recording(stop_key, capsys):
+    from unittest.mock import Mock
+    pipeline = DualGelloPipeline.__new__(DualGelloPipeline)
+    pipeline.recording = False
+    pipeline.stop_episode = Mock()
+    assert pipeline._recording_key(stop_key)
+    pipeline.stop_episode.assert_not_called()
+    assert '停止录制：当前没有正在录制的 episode' in capsys.readouterr().out
+
+
+def test_episode_save_logs_length_sample_count_and_absolute_path(tmp_path, monkeypatch, caplog):
+    import logging
+    from dataclasses import replace
+    from pathlib import Path
+    from nero_collection.h5_writer import EpisodeBuffer
+    pipeline = make_pipeline()
+    pipeline.collection_config = replace(pipeline.collection_config,
+        output=replace(pipeline.collection_config.output, directory=tmp_path, prefix='recording'))
+    pipeline.buffer = EpisodeBuffer(pipeline.collection_config, pipeline.ARM_NAMES, enable_online_tau_ext=False)
+    pipeline.buffer.teleop_timestamps_us.extend([1000000, 1010000])
+    pipeline.recording = True
+    pipeline.state = 'recording'
+    pipeline.recording_started_t = time.monotonic()-1.25
+    monkeypatch.setattr(pipeline, '_consume_samples', lambda: None)
+    def save(path):
+        assert '正在保存至' in caplog.text  # Visible before file writing starts.
+        return path
+    monkeypatch.setattr(pipeline.buffer, 'save', save)
+    caplog.set_level(logging.INFO, logger='dual_gello_collect')
+    assert pipeline.stop_episode(True, None)
+    assert not pipeline.recording and pipeline.state == 'following'
+    duration = pipeline.buffer.episode_metadata['recorded_duration_s']
+    assert duration >= 1.25
+    assert f'episode 保存完成：长度 {duration:.3f} s，2 个样本；保存路径：' in caplog.text
+    assert str(Path(tmp_path).resolve()) in caplog.text
+    assert '.h5' in caplog.text
 
 
 @pytest.mark.parametrize('reset_q', [True, False])
@@ -1286,8 +1388,10 @@ def test_recording_keys_are_processed_inside_alignment_wait():
         pipeline.alignment['alignment_samples'] = 3
         keys = SimpleNamespace(read_key=Mock(side_effect=[' ', 'r', None]))
         pipeline.wait_for_alignment(keys)
+        for future, target in pipeline.pending_episode_saves:
+            future.result(timeout=2.)
         first_buffer.save.assert_called_once()
-        assert first_buffer.sample_count > 0
+        assert first_buffer.episode_metadata['recorded_sample_count'] > 0
         assert pipeline.recording and pipeline.buffer is not first_buffer
         assert pipeline.state == 'aligned' and pipeline.follow_stop.is_set()
         assert pipeline.sampling_thread.is_alive()

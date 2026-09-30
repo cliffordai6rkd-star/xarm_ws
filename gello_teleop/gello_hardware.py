@@ -5,6 +5,12 @@ import time
 
 import numpy as np
 
+try:
+    import termios
+    _SERIAL_IO_ERRORS = (OSError, termios.error)
+except ImportError:  # Windows serial backends report OSError subclasses.
+    _SERIAL_IO_ERRORS = (OSError,)
+
 
 # Control-table variants are selected from the model number returned by
 # Dynamixel ping.  A damping request for an unknown model is rejected instead
@@ -322,7 +328,7 @@ class GelloReader:
                 raise RuntimeError('GELLO port is closed')
             started = time.monotonic()
             group = self.reset_group if reset_feedback else self.group
-            check(group.txRxPacket(), f"GELLO read {self.config.port}")
+            check(self._serial_call(group.txRxPacket, operation='读取位置'), f"GELLO read {self.config.port}")
             values = []
             pwms, currents = [], []
             for motor_id in self.ids:
@@ -351,7 +357,8 @@ class GelloReader:
             method = self.packet.write2ByteTxRx
         else:
             method = self.packet.write4ByteTxRx
-        comm, error = method(self.port, motor_id, address, value)
+        comm, error = self._serial_call(method, self.port, motor_id, address, value,
+                                       operation=f'写入 ID={motor_id} register={address}')
         check(comm, f"Dynamixel {motor_id} write {address}")
         if error:
             detail = ''
@@ -368,10 +375,18 @@ class GelloReader:
         method = {1: self.packet.read1ByteTxRx,
                   2: self.packet.read2ByteTxRx,
                   4: self.packet.read4ByteTxRx}[size]
-        value, comm, error = method(self.port, motor_id, address)
+        value, comm, error = self._serial_call(method, self.port, motor_id, address,
+                                              operation=f'读取 ID={motor_id} register={address}')
         check(comm, f'Dynamixel {motor_id} read {address}')
         check(error, f'Dynamixel {motor_id} device error at {address}')
         return value
+
+    def _serial_call(self, method, *args, operation):
+        try:
+            return method(*args)
+        except _SERIAL_IO_ERRORS as exc:
+            raise ConnectionError(f'GELLO 串口 {getattr(self.config, "port", "unknown")} '
+                                  f'{operation}失败：{exc}；检查 USB 连接、供电及串口占用') from exc
 
     def read_hold_status(self):
         """Read holding state through this reader's existing serial connection."""

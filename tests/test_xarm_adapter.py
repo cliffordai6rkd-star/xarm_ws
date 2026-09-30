@@ -78,6 +78,28 @@ def test_connect_and_dry_run_have_no_motion_side_effects(adapter):
         adapter.enable()
 
 
+def test_theoretical_only_state_requests_position_velocity_without_effort(adapter):
+    from unittest.mock import Mock
+    adapter._arm.get_joint_states = Mock(return_value=(0, [[0.0]*6, [0.1]*6]))
+    state = adapter.read_state()
+    adapter._arm.get_joint_states.assert_called_once_with(is_radian=True, num=2)
+    assert state.dq_valid and not state.torque_valid and not state.current_valid
+    np.testing.assert_allclose(state.dq, .1)
+    assert np.isnan(state.torque).all()
+
+
+def test_tcp_payload_reads_report_cache_and_converts_mm_to_m(adapter):
+    before = list(FakeArm.calls)
+    adapter._arm.tcp_load = [.79, [22., -3., 40.]]
+    payload = adapter.reported_tcp_payload
+    assert payload['mass_kg'] == .79
+    np.testing.assert_allclose(payload['com_m'], [.022, -.003, .04])
+    assert FakeArm.calls == before
+    for invalid in [None, [0., [0., 0., 0.]], [.79, [np.nan, 0., 0.]], [.79, [1., 2.]]]:
+        adapter._arm.tcp_load = invalid
+        assert adapter.reported_tcp_payload is None
+
+
 def test_command_updates_held_value_only_after_success(adapter):
     adapter.config.config_kwargs["execution_enabled"] = True
     adapter.enable()
@@ -228,6 +250,109 @@ def test_exit_hold_does_not_restart_motion_after_feedback_failure(adapter, monke
         adapter.hold_position()
     assert FakeArm.calls[begin:] == [('set_state', (4,), {})]
     assert adapter._enabled
+
+
+@pytest.mark.parametrize('value', [6, -1, True, False, 2.5, float('nan'), float('inf'), 'invalid'])
+def test_invalid_collision_sensitivity_is_rejected_before_connection(value):
+    from ufactory_devices.robot.xarm_adapter import XArmAdapter
+    begin = len(FakeArm.calls)
+    with pytest.raises(ValueError, match='collision_sensitivity'):
+        XArmAdapter(ArmEndpointConfig(name='left', config_kwargs={'collision_sensitivity': value}))
+    assert FakeArm.calls[begin:] == []
+
+
+@pytest.mark.parametrize('level', [0, 3, 5])
+def test_collision_sensitivity_is_applied_only_when_enabling(adapter, monkeypatch, caplog, level):
+    from unittest.mock import Mock
+    setter = Mock(return_value=0)
+    monkeypatch.setattr(adapter._arm, 'set_collision_sensitivity', setter, raising=False)
+    adapter.config.config_kwargs.update(execution_enabled=True, collision_sensitivity=level)
+    def apply(level, **kwargs):
+        FakeArm.calls.append(('set_collision_sensitivity', (level,), kwargs))
+        return 0
+    setter.side_effect = apply
+    begin = len(FakeArm.calls)
+    adapter.enable()
+    setter.assert_called_once_with(level, wait=False)
+    assert [call[0] for call in FakeArm.calls[begin:]] == [
+        'set_collision_sensitivity', 'motion_enable', 'set_mode', 'set_state']
+    assert FakeArm.calls[-1][1] == (0,)
+    if level == 0:
+        assert '控制器碰撞检测已关闭' in caplog.text
+
+
+def test_null_collision_sensitivity_preserves_controller_setting(adapter, monkeypatch):
+    from unittest.mock import Mock
+    setter = Mock(return_value=0)
+    monkeypatch.setattr(adapter._arm, 'set_collision_sensitivity', setter, raising=False)
+    adapter.config.config_kwargs.update(execution_enabled=True, collision_sensitivity=None)
+    adapter.enable()
+    setter.assert_not_called()
+
+
+def test_failed_collision_setting_prevents_motor_enable(adapter, monkeypatch):
+    from unittest.mock import Mock
+    monkeypatch.setattr(adapter._arm, 'set_collision_sensitivity', Mock(return_value=1), raising=False)
+    adapter.config.config_kwargs.update(execution_enabled=True, collision_sensitivity=3)
+    begin = len(FakeArm.calls)
+    with pytest.raises(RuntimeError, match='set_collision_sensitivity failed with code 1'):
+        adapter.enable()
+    assert not adapter._enabled
+    assert FakeArm.calls[begin:] == []
+
+
+def test_existing_controller_fault_prevents_collision_changes_and_enable(adapter, monkeypatch):
+    from unittest.mock import Mock
+    from ufactory_devices.robot.xarm_adapter import XArmControllerFault
+    setter = Mock(return_value=0)
+    monkeypatch.setattr(adapter._arm, 'set_collision_sensitivity', setter, raising=False)
+    monkeypatch.setattr(adapter._arm, 'get_err_warn_code', lambda: (0, [31, 0]))
+    adapter.config.config_kwargs.update(execution_enabled=True, collision_sensitivity=3)
+    begin = len(FakeArm.calls)
+    with pytest.raises(XArmControllerFault, match='C31'):
+        adapter.enable()
+    setter.assert_not_called()
+    assert FakeArm.calls[begin:] == []
+    assert not adapter._enabled
+
+
+def test_contact_fault_reports_controller_cause_without_clearing_or_reenabling(adapter, monkeypatch):
+    from ufactory_devices.robot.xarm_adapter import XArmControllerFault
+    from unittest.mock import Mock
+    adapter.config.config_kwargs['execution_enabled'] = True
+    adapter.enable()
+    previous_target = adapter.last_commanded_q
+    getter = Mock(return_value=(0, [31, 0]))
+    monkeypatch.setattr(adapter._arm, 'get_err_warn_code', getter)
+    FakeArm.command_code = 1
+    begin = len(FakeArm.calls)
+    with pytest.raises(XArmControllerFault) as raised:
+        adapter.command_joint_positions(np.full(6, .1))
+    assert (raised.value.arm_name, raised.value.error_code, raised.value.api_code) == ('xarm6', 31, 1)
+    assert raised.value.operation == 'set_servo_angle_j'
+    getter.assert_called_once_with()
+    assert [call[0] for call in FakeArm.calls[begin:]] == ['set_servo_angle_j']
+    assert adapter.last_commanded_q is previous_target
+    assert adapter._enabled
+
+
+def test_successful_servo_does_not_add_error_query_to_control_loop(adapter, monkeypatch):
+    from unittest.mock import Mock
+    adapter.config.config_kwargs['execution_enabled'] = True
+    adapter.enable()
+    getter = Mock(return_value=(0, [0, 0]))
+    monkeypatch.setattr(adapter._arm, 'get_err_warn_code', getter)
+    adapter.command_joint_positions(np.full(6, .1))
+    getter.assert_not_called()
+
+
+def test_failed_fault_diagnostic_preserves_original_command_failure(adapter, monkeypatch):
+    adapter.config.config_kwargs['execution_enabled'] = True
+    adapter.enable()
+    FakeArm.command_code = 1
+    monkeypatch.setattr(adapter._arm, 'get_err_warn_code', lambda: (5, [31, 0]))
+    with pytest.raises(RuntimeError, match='xarm6: xArm set_servo_angle_j failed with code 1'):
+        adapter.command_joint_positions(np.full(6, .1))
 
 
 def test_readonly_connection_cannot_request_exit_hold(adapter):

@@ -51,9 +51,34 @@ from nero_collection.fixed_rate import FixedRateTicker
 from nero_collection.h5_writer import EpisodeBuffer
 from nero_collection.keyboard import TerminalKeys
 from nero_collection.time_utils import now_us
-from ufactory_devices.robot.xarm_adapter import XArmAdapter
+from ufactory_devices.robot.xarm_adapter import XArmAdapter, XArmControllerFault, validate_collision_sensitivity
+from xarm_stack.torque_visualization import TorqueVisualizer
 
 log = logging.getLogger("dual_gello_collect")
+
+
+def _save_episode_buffer(buffer, target, *, release=False):
+    """Own a frozen episode while saving; never touch robot/producer objects."""
+    duration = buffer.episode_metadata.get('recorded_duration_s', 0.)
+    count = buffer.sample_count
+    path = buffer.save(target)
+    log.info('episode 保存完成：长度 %.3f s，%d 个样本；保存路径：%s',
+             duration, count, Path(path).resolve())
+    if release:
+        # Millions of small arrays must also be released cooperatively. A
+        # single giant list destruction can hold the GIL and delay control.
+        for collection in (buffer.teleop_data, buffer.camera_frames,
+                           buffer.camera_depth_frames, buffer.camera_timestamps_us):
+            for values in collection.values():
+                batch_size = 16 if collection is buffer.camera_frames or collection is buffer.camera_depth_frames else 2048
+                while values:
+                    del values[-batch_size:]
+                    time.sleep(0)
+            collection.clear()
+        while buffer.teleop_timestamps_us:
+            del buffer.teleop_timestamps_us[-2048:]
+            time.sleep(0)
+    return path
 
 
 @dataclass(frozen=True)
@@ -428,9 +453,12 @@ class DualGelloPipeline:
     ARM_NAMES = ("left", "right")
 
     def __init__(self, config_path: str | Path, *, arm_factory: Callable | None = None,
-                 reader_factory: Callable | None = None):
+                 reader_factory: Callable | None = None, torque_plot_enabled: bool | None = None,
+                 active_arms: list[str] | None = None):
         self.config_path = Path(config_path).expanduser().resolve()
         self.raw = yaml.safe_load(self.config_path.read_text(encoding="utf-8")) or {}
+        if active_arms is not None:
+            self.raw['active_arms'] = active_arms
         active = self.raw.get("active_arms", list(type(self).ARM_NAMES))
         if (not isinstance(active, list) or not active
                 or any(side not in type(self).ARM_NAMES for side in active)
@@ -438,6 +466,11 @@ class DualGelloPipeline:
             raise ValueError('active_arms must be a nonempty list of unique left/right sides')
         # Preserve the dataset's canonical side order, including right-only mode.
         self.ARM_NAMES = tuple(side for side in type(self).ARM_NAMES if side in active)
+        torque_plot = dict(self.raw.get('torque_visualization', {}))
+        if torque_plot_enabled is not None:
+            torque_plot['enabled'] = torque_plot_enabled
+        self.torque_visualizer = TorqueVisualizer.from_config(torque_plot, self.config_path, self.ARM_NAMES)
+        self._last_torque_preview_t = 0.
         gello_path = Path(self.raw.get("gello_config", "xarm7_gello_calibration.yaml"))
         if not gello_path.is_absolute():
             gello_path = (self.config_path.parent / gello_path).resolve()
@@ -451,6 +484,9 @@ class DualGelloPipeline:
         if tuple(name for name, _, _ in self.configs) != self.ARM_NAMES:
             raise ValueError("GELLO config must contain the active arms in fixed order")
         self.control = dict(self.raw.get("control", {}))
+        for side in self.ARM_NAMES:
+            validate_collision_sensitivity(self.raw.get('arms', {}).get(side, {}).get(
+                'collision_sensitivity', self.control.get('collision_sensitivity')))
         self.alignment = dict(self.raw.get("alignment", {}))
         for key in ('alignment_tolerance_rad', 'alignment_samples'):
             value = self.alignment.get(key, .05 if key.endswith('rad') else 5)
@@ -520,6 +556,10 @@ class DualGelloPipeline:
         self.control_error: BaseException | None = None
         self.queue_overflow = 0
         self.stale_count = 0
+        self.sampling_late_tick_count = 0
+        self.sampling_skipped_tick_count = 0
+        self.sampling_max_lateness_s = 0.
+        self._last_sampling_warning_t = float('-inf')
         self._last_control_t: float | None = None
         self.control_tick_count = 0
         self.control_started_t: float | None = None
@@ -530,6 +570,10 @@ class DualGelloPipeline:
         self.buffer: EpisodeBuffer | None = None
         self.recording = False
         self.recording_segment_start_us = 0
+        self.episode_save_executor = None
+        self.pending_episode_saves = []
+        self.failed_episode_saves = []
+        self._next_episode_save_index = 0
         self.reference_capture_busy = False
         self.reference_publisher = ReferencePosePublisher(self.config_path, self.reference_pose_snapshot)
         self.reference_save_executor = None
@@ -574,6 +618,7 @@ class DualGelloPipeline:
             "joint_speed_rad_s": float(self.control.get("joint_speed_rad_s", 1.0)),
             "joint_acc_rad_s2": float(self.control.get("joint_acc_rad_s2", 5.0)),
             "sdk_timeout_s": float(self.control.get("sdk_timeout_s", 0.1)),
+            "collision_sensitivity": self.control.get('collision_sensitivity'),
             "feedback_signal": str(arm_cfg.get("feedback_signal", "torque")),
             "velocity_source": str(arm_cfg.get("velocity_source", "hardware")),
         }
@@ -588,28 +633,43 @@ class DualGelloPipeline:
         pairs = []
         for side, robot, _ in self.configs:
             follower_kwargs = dict(self.raw.get("arms", {}).get(side, {}))
+            follower_kwargs.setdefault('collision_sensitivity', self.control.get('collision_sensitivity'))
             follower_kwargs["robot_ip"] = robot.robot_ip
             pairs.append(ArmPairConfig(
                 name=side,
                 leader=ArmEndpointConfig(name=f"{side}_gello", rest_q=tuple(robot.reset_q)),
                 follower=ArmEndpointConfig(name=side, rest_q=tuple(robot.reset_q), config_kwargs=follower_kwargs),
             ))
-        cameras = tuple(_camera_config(item) for item in self.raw.get("cameras", []) if item.get("enabled", True))
+        # Arm selection changes robot endpoints only. Camera acquisition,
+        # recording and preview always follow their own camera configuration.
+        cameras = tuple(_camera_config(item) for item in self.raw.get("cameras", [])
+                        if item.get("enabled", True))
         return CollectionConfig(
             teleop=TeleopConfig(master_slave=tuple(pairs), command=CommandConfig(control_mode="position", sample_rate_hz=self.sample_rate_hz)),
-            output=OutputConfig(directory=output_dir, prefix=str(output_raw.get("prefix", "episode")), discard_initial_s=float(output_raw.get("discard_initial_s", 0.0))),
+            output=OutputConfig(directory=output_dir, prefix=str(output_raw.get("prefix", "episode")),
+                                discard_initial_s=float(output_raw.get("discard_initial_s", 0.0)),
+                                camera_compression=output_raw.get('camera_compression')),
             cameras=cameras,
-            raw_yaml=self.config_path.read_text(encoding="utf-8"),
+            raw_yaml=yaml.safe_dump(self.raw, sort_keys=False),
         )
 
     def connect(self):
         if self.state != "disconnected":
             raise RuntimeError(f"connect is invalid in state {self.state}")
+        if self.torque_visualizer is not None:
+            # Check the model and GUI before any hardware lifecycle begins.
+            self.torque_visualizer.start()
         for side, robot, leader in self.configs:
+            log.info('连接 %s：xArm=%s；GELLO=%s', side, robot.robot_ip, leader.port)
             arm = self._arm_factory(side, robot)
             self.arms.append(arm)
             arm.connect()
+            configure_report = getattr(arm, 'configure_feedback_report', None)
+            if callable(configure_report):
+                configure_report()
             arm.read_state()  # connection/feedback check before any motion
+            if self.torque_visualizer is not None:
+                self.torque_visualizer.bind_payload_source(side, arm)
             reader = self._reader_factory(leader)
             mapper = JointMapper(robot, leader)
             # Only saved calibration is accepted.  JointMapper.align uses it
@@ -633,6 +693,7 @@ class DualGelloPipeline:
                     raise RuntimeError(f'Required cameras did not deliver frames: {sorted(expected-received)}')
                 time.sleep(.01)
         self.state = "connected"
+        self._consume_samples()
 
     def _observe_reader(self, index, reader):
         """Cache actual reads for the recorder, including reads during alignment."""
@@ -649,7 +710,7 @@ class DualGelloPipeline:
 
     def reset(self, keys=None):
         if self.state != "connected":
-            raise RuntimeError("both arms must pass connection check before reset")
+            raise RuntimeError("selected arms must pass connection check before reset")
         self.reset_followers(keys)
         self.align_gello_to_xarm([np.asarray(robot.reset_q) for _, robot, _ in self.configs], keys=keys)
 
@@ -742,8 +803,11 @@ class DualGelloPipeline:
             raise ValueError('Invalid xArm alignment targets')
         self.alignment_reference_raw = [np.asarray(leader.joint_offsets) + q / np.asarray(leader.joint_signs)
                                        for q, (_, _, leader) in zip(self.alignment_target_q, self.configs)]
-        for reader in self.readers:
-            reader.prepare_alignment()
+        for side, reader in zip(self.ARM_NAMES, self.readers):
+            try:
+                reader.prepare_alignment()
+            except ConnectionError as exc:
+                raise ConnectionError(f'{side} GELLO 对齐失败：{exc}') from exc
         current = self.alignment.get('gello_hold_current_raw')
         self.state = "aligning"
         if current is not None:
@@ -1273,18 +1337,20 @@ class DualGelloPipeline:
     def _recording_key(self, key):
         if key in {'r', 'R'}:
             if self.recording:
-                print('当前 episode 已在录制；空格停止并保存。', flush=True)
+                print('当前 episode 已在录制；Enter 或空格停止并保存。', flush=True)
             elif self.state in {'following', 'holding'} or (
                     self.state in {'aligning', 'aligned'} and self.sampling_thread is not None):
                 self.start_episode()
-                print('episode recording', flush=True)
+                print('episode 开始录制；Enter 或空格停止并保存。', flush=True)
             else:
                 print('请在启动接管完成后按 r 录制。', flush=True)
             return True
-        if key == ' ':
+        if key in {' ', '\r', '\n'}:
             if self.recording:
-                path = self.stop_episode(True, None)
-                print(f'episode saved to {path}' if path else 'episode stopped (no samples)', flush=True)
+                print('停止录制，正在保存 episode（后台写入，遥操和预览继续）...', flush=True)
+                self.stop_episode(True, None, background=True)
+            else:
+                print('停止录制：当前没有正在录制的 episode；按 r 开始录制。', flush=True)
             return True
         return False
 
@@ -1292,30 +1358,66 @@ class DualGelloPipeline:
         key = keys.read_key(timeout)
         return None if self._recording_key(key) else key
 
-    def stop_episode(self, save: bool, index: int | None = None) -> Path | None:
+    def stop_episode(self, save: bool, index: int | None = None, *, background=False) -> Path | None:
         if not self.recording:
             raise RuntimeError("no recording episode is active")
         # Recording is independent of follower control, including F/T/O.
         self._consume_samples()
         self.recording = False
+        elapsed = max(time.monotonic()-self.recording_started_t, 1e-6)
+        sample_count = self.buffer.sample_count if self.buffer is not None else 0
         if self.buffer is not None:
-            elapsed = max(time.monotonic()-self.recording_started_t, 1e-6)
             self.buffer.episode_metadata.update({
                 'recorded_duration_s': elapsed,
+                'recorded_sample_count': sample_count,
                 "actual_recorded_hz": self.buffer.sample_count / elapsed,
                 "control_tick_count": self.control_tick_count,
                 "gello_reader_errors": [producer.errors for producer in self.producers],
                 "xarm_state_reader_errors": [producer.errors for producer in self.state_producers],
                 "queue_overflow_count": self.queue_overflow,
                 "expired_target_count": self.stale_count,
+                'sampling_late_tick_count': self.sampling_late_tick_count,
+                'sampling_skipped_tick_count': self.sampling_skipped_tick_count,
+                'sampling_max_lateness_s': self.sampling_max_lateness_s,
             })
         if self.state == 'recording':
             self.state = 'following'
         if not save or self.buffer is None or self.buffer.sample_count == 0:
+            if save:
+                log.warning('episode 停止录制：长度 %.3f s，%d 个样本；无有效样本，未生成文件',
+                            elapsed, sample_count)
             return None
         output_dir = self.collection_config.output.directory
-        index = next_episode_index(output_dir, self.collection_config.output.prefix) if index is None else index
-        return self.buffer.save(episode_path(output_dir, self.collection_config.output.prefix, index))
+        if index is None:
+            index = max(next_episode_index(output_dir, self.collection_config.output.prefix),
+                        self._next_episode_save_index)
+        self._next_episode_save_index = max(self._next_episode_save_index, index+1)
+        target = episode_path(output_dir, self.collection_config.output.prefix, index)
+        log.info('episode 停止录制：长度 %.3f s，%d 个样本；正在保存至 %s',
+                 elapsed, sample_count, target.resolve())
+        if not background:
+            return _save_episode_buffer(self.buffer, target)
+        if self.episode_save_executor is None:
+            self.episode_save_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='episode-save')
+        frozen = self.buffer
+        future = self.episode_save_executor.submit(_save_episode_buffer, frozen, target, release=True)
+        self.pending_episode_saves.append((future, target))
+        self.buffer = None  # Further samples cannot mutate the saving episode.
+        return target
+
+    def _poll_episode_saves(self):
+        pending = []
+        for future, target in self.pending_episode_saves:
+            if not future.done():
+                pending.append((future, target))
+                continue
+            try:
+                future.result()
+            except Exception:
+                # Retain the future/traceback and its frozen buffer for recovery.
+                self.failed_episode_saves.append((future, target))
+                log.exception('episode 保存失败，保留内存数据，遥操继续；目标路径：%s', target)
+        self.pending_episode_saves = pending
 
     def _control_loop(self):
         ticker = FixedRateTicker(self.sample_rate_hz, float(self.control.get("maximum_lateness_s", 0.03)))
@@ -1364,17 +1466,31 @@ class DualGelloPipeline:
         except BaseException as exc:
             self.control_error = exc
             self.stop_event.set()
-            log.exception("dual xArm control loop stopped")
+            if isinstance(exc, XArmControllerFault):
+                log.error('xArm 控制器保护停止：%s', exc)
+            else:
+                log.exception("dual xArm control loop stopped")
 
     def _sampling_loop(self):
         """Independent state capture; F/T/O never start or stop recording."""
-        ticker = FixedRateTicker(self.sample_rate_hz, float(self.control.get('maximum_lateness_s', .03)))
+        ticker = FixedRateTicker(self.sample_rate_hz, float(self.control.get('maximum_lateness_s', .03)), strict=False)
         try:
             while not self.sampling_stop.is_set():
                 _, lateness = ticker.wait('dual teleop data capture')
+                self.sampling_skipped_tick_count += ticker.last_skipped_ticks
+                self.sampling_max_lateness_s = max(self.sampling_max_lateness_s, lateness)
+                if lateness > ticker.maximum_lateness_s:
+                    self.sampling_late_tick_count += 1
+                    now = time.monotonic()
+                    if now-self._last_sampling_warning_t >= 1.:
+                        log.warning('录制采样延迟 %.1f ms，跳过 %d 个过期时刻；按真实时间戳继续采样',
+                                    lateness*1000., ticker.last_skipped_ticks)
+                        self._last_sampling_warning_t = now
                 with self.raw_sample_lock:
                     raw_samples = list(self.raw_samples)
                 states = [producer.snapshot() for producer in self.state_producers]
+                if self.torque_visualizer is not None and all(s is not None for s in states):
+                    self.torque_visualizer.publish(self.ARM_NAMES, states)
                 if any(s is None for s in raw_samples+states):
                     continue
                 leaders = []
@@ -1427,12 +1543,24 @@ class DualGelloPipeline:
                     except queue.Empty:
                         pass
         except BaseException as exc:
-            self.control_error = exc
+            # Preserve the command failure when sampling stops later because
+            # the same controller fault made its feedback unavailable.
+            if self.control_error is None:
+                self.control_error = exc
             self.stop_event.set()
             self.sampling_stop.set()
             log.exception('dual teleop sampling loop stopped')
 
     def _consume_samples(self):
+        # Before takeover the state producers are not running. Seed/update
+        # the model plot here so static gravity is visible during reset and
+        # leader alignment too. Once sampling starts it owns publication.
+        if (self.torque_visualizer is not None and self.sampling_thread is None
+                and self.state != 'disconnected' and len(self.arms) == len(self.ARM_NAMES)
+                and time.monotonic()-self._last_torque_preview_t >= 1/self.sample_rate_hz):
+            states = [arm.read_state() for arm in self.arms]
+            self.torque_visualizer.publish(self.ARM_NAMES, states)
+            self._last_torque_preview_t = time.monotonic()
         while True:
             try:
                 sample = self.sample_queue.get_nowait()
@@ -1465,10 +1593,13 @@ class DualGelloPipeline:
         self._consume_samples()
         self._poll_gripper_press_status()
         self._poll_reference_save()
+        self._poll_episode_saves()
         for worker in self.gripper_workers:
             if worker.error is not None:
                 raise RuntimeError(f'Gripper I/O failed: {worker.error}') from worker.error
         if self.control_error is not None:
+            if isinstance(self.control_error, XArmControllerFault):
+                raise self.control_error
             raise RuntimeError(str(self.control_error)) from self.control_error
         if self.stop_event.is_set() and any(producer.last_error for producer in self.producers):
             raise RuntimeError(f'GELLO I/O failed: {self.leader_sample_status()}')
@@ -1561,6 +1692,9 @@ class DualGelloPipeline:
                         if not state.q_valid or not np.isfinite(state.q).all():
                             raise RuntimeError('Position hold feedback is invalid')
                         arm.command_joint_positions(state.q)
+                except XArmControllerFault as exc:
+                    success = False
+                    log.warning('%s 控制器保持保护停止，未复位或重新使能：%s', arm.name, exc)
                 except Exception:
                     success = False
                     log.exception("failed to hold %s; motor enable was not cancelled", arm.name)
@@ -1618,6 +1752,8 @@ class DualGelloPipeline:
         # A successful exit reset already left the controller at its final
         # mode-0 target. Do not overwrite it with a mode-1 servo command.
         self._hold_both(hold_followers=not self.exit_hold_complete)
+        if self.torque_visualizer is not None:
+            self.torque_visualizer.close()
         try:
             self.camera_manager.stop()
         except Exception:
@@ -1639,6 +1775,11 @@ class DualGelloPipeline:
             self.reference_save_executor.shutdown(wait=True)
             self._poll_reference_save()
             self.reference_save_executor = None
+        if self.episode_save_executor is not None:
+            log.info('设备已停止并关闭，等待后台 episode 保存完成。')
+            self.episode_save_executor.shutdown(wait=True)
+            self._poll_episode_saves()
+            self.episode_save_executor = None
 
     def _calibration_snapshot(self, i):
         mapper = self.mappers[i]
@@ -1662,7 +1803,7 @@ class DualGelloPipeline:
             self.reset(keys=keys)
             self.wait_for_alignment(keys)
             self.takeover()
-            print("遥操已接管；r 录制，空格停止保存；F 保持，o 复位，t 对齐接管；q/Ctrl+C 复位保持后退出。", flush=True)
+            print("遥操已接管；r 录制，Enter/空格停止保存；F 保持，o 复位，t 对齐接管；q/Ctrl+C 复位保持后退出。", flush=True)
             if reset_q:
                 print('参考位姿模式：遥操到希望的位置后按 s，覆盖保存所选主从臂当前 q；无需 F 或 Enter，可重复保存。', flush=True)
             while True:
@@ -1724,6 +1865,7 @@ def _joint_vector(value, dof, name):
 
 def _camera_config(item):
     value = dict(item)
+    value.pop('arm', None)
     return CameraConfig(name=str(value.pop("name")), **value)
 
 
@@ -1757,16 +1899,30 @@ def main(argv=None):
     parser.add_argument("--check-config", action="store_true")
     parser.add_argument("--auto-save", action="store_true")
     parser.add_argument("--reset-q", action="store_true", help="照常启动遥操；按 s 覆盖保存所选主从臂当前 q 为下次启动参考，保存后继续遥操")
+    arms = parser.add_mutually_exclusive_group()
+    arms.add_argument('--left', dest='active_arms', action='store_const', const=['left'], help='仅左臂，覆盖 YAML 的 active_arms')
+    arms.add_argument('--right', dest='active_arms', action='store_const', const=['right'], help='仅右臂，覆盖 YAML 的 active_arms')
+    arms.add_argument('--both', dest='active_arms', action='store_const', const=['left', 'right'], help='双臂，覆盖 YAML 的 active_arms')
+    plot = parser.add_mutually_exclusive_group()
+    plot.add_argument('--torque-plot', dest='torque_plot', action='store_true', help='开启七轴实测 / URDF 力矩对比图')
+    plot.add_argument('--no-torque-plot', dest='torque_plot', action='store_false', help='关闭力矩实时图（无桌面数采）')
+    parser.set_defaults(torque_plot=None)
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args(argv)
     logging.basicConfig(level=getattr(logging, args.log_level.upper()), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    pipeline = DualGelloPipeline(args.config)
+    overrides = {}
+    if args.torque_plot is not None:
+        overrides['torque_plot_enabled'] = args.torque_plot
+    if args.active_arms is not None:
+        overrides['active_arms'] = args.active_arms
+    pipeline = DualGelloPipeline(args.config, **overrides)
     user_exit = False
     exit_code = 0
     try:
         if args.check_config:
             print(json.dumps({"state": pipeline.state, "arm_names": list(pipeline.ARM_NAMES),
                               "sample_rate_hz": pipeline.sample_rate_hz,
+                              "cameras": [camera.name for camera in pipeline.collection_config.cameras],
                               "gello_config": pipeline.raw.get("gello_config")}, indent=2))
             return 0
         pipeline.connect()
@@ -1775,6 +1931,12 @@ def main(argv=None):
     except KeyboardInterrupt:
         user_exit = True
         exit_code = 130
+    except ConnectionError as exc:
+        log.error('数采连接中断：%s', exc)
+        exit_code = 1
+    except XArmControllerFault as exc:
+        log.error('数采因控制器保护停止：%s', exc)
+        exit_code = 1
     finally:
         with _exit_interrupt_handler(pipeline):
             try:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,6 +17,9 @@ from nero_collection.time_utils import now_us
 
 
 FORMAT_VERSION = "ufactory_multimodal_episode/v1"
+log = logging.getLogger(__name__)
+_CAMERA_WRITE_BATCH_BYTES = 8 * 1024 * 1024
+_TELEOP_STACK_BATCH_SIZE = 2048
 
 FOLLOWER_TELEOP_DATASETS = frozenset(
     {
@@ -278,6 +283,7 @@ class EpisodeBuffer:
         return len(self.teleop_timestamps_us)
 
     def save(self, path: str | Path) -> Path:
+        started_t = time.monotonic()
         try:
             import h5py
         except Exception as exc:
@@ -314,6 +320,7 @@ class EpisodeBuffer:
                 "follower joint vectors are concatenated in arm_names order"
             )
             teleop.attrs["clock"] = "unix_epoch timestamps; scheduling uses monotonic"
+            teleop.attrs['sample_rate_hz'] = self.config.teleop.command.sample_rate_hz
             teleop.attrs["timestamp_definition"] = (
                 "state acquisition host_receive time; source hardware timestamps are "
                 "stored separately when available"
@@ -427,13 +434,20 @@ class EpisodeBuffer:
                     if not frames:
                         continue
                     group = cameras.create_group(camera_name)
-                    stacked_frames = np.stack(frames, axis=0)
-                    group.create_dataset("frames", data=stacked_frames, compression="gzip", compression_opts=4)
+                    compression = self.config.output.camera_compression
+                    log.info('保存相机 %s：%d 帧，输出 %s，压缩=%s', camera_name, len(frames),
+                             frames[0].shape, compression or '无')
+                    _write_camera_frames(group, 'frames', frames, compression)
                     group.create_dataset(
                         "timestamp_us",
                         data=np.asarray(self.camera_timestamps_us[camera_name], dtype=np.int64),
                     )
                     group.attrs["timeline"] = f"cameras/{camera_name}/timestamp_us"
+                    group['timestamp_us'].attrs['unit'] = 'us'
+                    config = next((c for c in self.config.cameras if c.name == camera_name), None)
+                    if config is not None:
+                        group.attrs['fps'] = config.fps
+                    group.attrs['frame_count'] = len(frames)
                     depth_frames = self.camera_depth_frames.get(camera_name, ())
                     if depth_frames:
                         if len(depth_frames) != len(frames):
@@ -441,14 +455,10 @@ class EpisodeBuffer:
                                 f"camera {camera_name} has {len(frames)} RGB frames but "
                                 f"{len(depth_frames)} depth frames"
                             )
-                        group.create_dataset(
-                            "depth",
-                            data=np.stack(depth_frames, axis=0),
-                            compression="gzip",
-                            compression_opts=4,
-                        )
+                        _write_camera_frames(group, 'depth', depth_frames, compression)
                         group.attrs["depth_dtype"] = "uint16"
                         group.attrs["depth_alignment"] = "aligned_to_color"
+                    log.info('相机 %s 保存完成：%d 帧', camera_name, len(frames))
 
             meta = h5.create_group("metadata")
             meta.create_dataset("arm_names_json", data=json.dumps(list(self.arm_names)), dtype=string_dtype)
@@ -471,6 +481,8 @@ class EpisodeBuffer:
             )
 
         tmp_path.replace(out_path)
+        log.info('H5 写入完成：%.3f s，%.1f MiB，%s', time.monotonic()-started_t,
+                 out_path.stat().st_size/(1024*1024), out_path)
         return out_path
 
     def _finalize_teleop_data(
@@ -956,7 +968,45 @@ def _pipeline_cutoff_hz(filters, key: str, *, fallback):
 def _stack(values: list[np.ndarray]) -> np.ndarray:
     if not values:
         return np.empty((0,), dtype=np.float64)
-    return np.stack(values, axis=0)
+    if len(values) <= _TELEOP_STACK_BATCH_SIZE:
+        return np.stack(values, axis=0)
+    first = np.stack(values[:_TELEOP_STACK_BATCH_SIZE], axis=0)
+    result = np.empty((len(values), *first.shape[1:]), dtype=first.dtype)
+    result[:len(first)] = first
+    for start in range(len(first), len(values), _TELEOP_STACK_BATCH_SIZE):
+        end = min(start+_TELEOP_STACK_BATCH_SIZE, len(values))
+        batch = np.stack(values[start:end], axis=0)
+        if batch.shape[1:] != result.shape[1:]:
+            raise ValueError('all input arrays must have the same shape')
+        dtype = np.promote_types(result.dtype, batch.dtype)
+        if dtype != result.dtype:
+            promoted = np.empty(result.shape, dtype=dtype)
+            promoted[:start] = result[:start]
+            result = promoted
+        result[start:end] = batch
+        time.sleep(0)  # Let control/sampling threads run between bounded copies.
+    return result
+
+def _write_camera_frames(group, name, frames, compression):
+    """Write unchanged frames with bounded scratch memory, avoiding a full stack."""
+    first = np.asarray(frames[0])
+    shape, dtype = first.shape, first.dtype
+    if any(np.asarray(frame).shape != shape or np.asarray(frame).dtype != dtype for frame in frames):
+        raise RuntimeError(f'camera {group.name}/{name} frame shape or dtype changed during recording')
+    options = {'compression': compression}
+    if compression == 'gzip':
+        options['compression_opts'] = 4
+    dataset = group.create_dataset(name, shape=(len(frames), *shape), dtype=dtype, **options)
+    dataset.attrs['encoding'] = 'raw'
+    batch_size = max(1, _CAMERA_WRITE_BATCH_BYTES // max(first.nbytes, 1))
+    next_progress_t = time.monotonic()+1.
+    for start in range(0, len(frames), batch_size):
+        end = min(start+batch_size, len(frames))
+        dataset[start:end] = np.stack(frames[start:end], axis=0)
+        if time.monotonic() >= next_progress_t:
+            log.info('相机 %s/%s 写入进度：%d/%d 帧', group.name, name, end, len(frames))
+            next_progress_t = time.monotonic()+1.
+
 
 def _compression_for(data: np.ndarray) -> str | None:
     if data.dtype == np.uint8 or data.size > 2048:

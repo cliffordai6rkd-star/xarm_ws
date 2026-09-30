@@ -6,7 +6,8 @@ h5py>=3.11
 
 # Optional hardware / visualization groups:
 # xArm-Python-SDK>=1.14
-# matplotlib>=3.7  # xarm_stack.plot_dual_joint_current real-time plots
+# matplotlib>=3.7  # real-time current / URDF theoretical torque plots
+# pin>=3,<4  # URDF momentum observer for collection torque plots
 # opencv-python>=4.8
 # pyrealsense2
 # mujoco>=3.1

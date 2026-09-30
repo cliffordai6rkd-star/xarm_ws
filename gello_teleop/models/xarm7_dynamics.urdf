@@ -1,6 +1,6 @@
 <?xml version='1.0' encoding='utf-8'?>
 <robot name="xarm7">
-  <!--Dynamics-only model generated from UFACTORY xarm_ros2 master 3654ba7bb2a0e502088251728d07263ea399d4a4, xarm_description/urdf/xarm7/xarm7.urdf.xacro. Geometry removed; original BSD-3-Clause license is LICENSE.xarm_ros2. Model excludes the gripper and any payload.-->
+  <!--Dynamics-only xArm7 model. Link1..7 inertial parameters: UFACTORY xarm_ros2 62936f7ea1846a85f7350de2c4c18f39e6d19715, xarm_description/config/link_inertial/xarm7_type7_HT_BR2.yaml. Kinematics retained from the legacy official model. BSD-3-Clause: LICENSE.xarm_ros2. Fixed base; excludes end effector.-->
   <link name="link_base">
     <inertial>
       <origin rpy="0 0 0" xyz="-0.021131 -0.0016302 0.056488" />
@@ -10,9 +10,9 @@
   </link>
   <link name="link1">
     <inertial>
-      <origin rpy="0 0 0" xyz="-0.0042142 0.02821 -0.0087788" />
-      <mass value="0.42603" />
-      <inertia ixx="0.0014243" ixy="3.9946E-05" ixz="4.7078E-06" iyy="0.00123" iyz="-0.00026073" izz="0.00099229" />
+      <origin rpy="0 0 0" xyz="-0.0002 0.02905 -0.01233" />
+      <mass value="2.382" />
+      <inertia ixx="0.0056905" ixy="-1.579e-05" ixz="5.125e-06" iyy="0.0049566" iyz="-0.000873378" izz="0.003316654" />
     </inertial>
   </link>
   <joint name="joint1" type="revolute">
@@ -25,9 +25,9 @@
   </joint>
   <link name="link2">
     <inertial>
-      <origin rpy="0 0 0" xyz="-3.3178E-05 -0.12849 0.026337" />
-      <mass value="0.56095" />
-      <inertia ixx="0.0031915" ixy="3.0892E-06" ixz="2.8729E-06" iyy="0.0017468" iyz="-0.0010241" izz="0.00235" />
+      <origin rpy="0 0 0" xyz="0.00022 -0.12856 0.01735" />
+      <mass value="1.869" />
+      <inertia ixx="0.0095989" ixy="1.541e-06" ixz="5.56e-06" iyy="0.00382472" iyz="-0.00317156" izz="0.007565669" />
     </inertial>
   </link>
   <joint name="joint2" type="revolute">
@@ -40,9 +40,9 @@
   </joint>
   <link name="link3">
     <inertial>
-      <origin rpy="0 0 0" xyz="0.04223 -0.023258 -0.0096674" />
-      <mass value="0.44463" />
-      <inertia ixx="0.0011454" ixy="0.0001654" ixz="-0.0001951" iyy="0.0010503" iyz="0.00012027" izz="0.0011083" />
+      <origin rpy="0 0 0" xyz="0.0466 -0.02463 -0.00768" />
+      <mass value="1.6383" />
+      <inertia ixx="0.00310955" ixy="0.00030837" ixz="-0.00058453" iyy="0.00264483" iyz="0.000338893" izz="0.0026624" />
     </inertial>
   </link>
   <joint name="joint3" type="revolute">
@@ -55,9 +55,9 @@
   </joint>
   <link name="link4">
     <inertial>
-      <origin rpy="0 0 0" xyz="0.067148 -0.10732 0.024479" />
-      <mass value="0.52387" />
-      <inertia ixx="0.0026033" ixy="0.00053379" ixz="0.00036314" iyy="0.0017649" iyz="-0.00083253" izz="0.0022431" />
+      <origin rpy="0 0 0" xyz="0.07047 -0.11575 0.012" />
+      <mass value="1.7269" />
+      <inertia ixx="0.005889" ixy="0.00137112" ixz="0.00088143" iyy="0.00359703" iyz="-0.001762155" izz="0.00543244" />
     </inertial>
   </link>
   <joint name="joint4" type="revolute">
@@ -70,9 +70,9 @@
   </joint>
   <link name="link5">
     <inertial>
-      <origin rpy="0 0 0" xyz="-0.00023397 0.036705 -0.080064" />
-      <mass value="0.18554" />
-      <inertia ixx="0.00099549" ixy="8.9957E-07" ixz="8.5285E-07" iyy="0.0008853" iyz="-0.00025682" izz="0.00035048" />
+      <origin rpy="0 0 0" xyz="-0.00032 0.01604 -0.026" />
+      <mass value="1.3203" />
+      <inertia ixx="0.00534665" ixy="1.5117e-05" ixz="-3.69e-07" iyy="0.0049779" iyz="-0.00022132" izz="0.0013624" />
     </inertial>
   </link>
   <joint name="joint5" type="revolute">
@@ -85,9 +85,9 @@
   </joint>
   <link name="link6">
     <inertial>
-      <origin rpy="0 0 0" xyz="0.058911 0.028469 0.0068428" />
-      <mass value="0.31344" />
-      <inertia ixx="0.00052034" ixy="-0.00014989" ixz="0.00011658" iyy="0.00067968" iyz="6.116E-05" izz="0.00078345" />
+      <origin rpy="0 0 0" xyz="0.06469 0.03278 0.02141" />
+      <mass value="1.325" />
+      <inertia ixx="0.0014745" ixy="-0.000488" ixz="0.0002953" iyy="0.0019037" iyz="0.00014749" izz="0.0023652" />
     </inertial>
   </link>
   <joint name="joint6" type="revolute">
@@ -100,9 +100,9 @@
   </joint>
   <link name="link7">
     <inertial>
-      <origin rpy="0 0 0" xyz="-1.5846E-05 -0.0046377 -0.012705" />
-      <mass value="0.31468" />
-      <inertia ixx="0.00016985" ixy="1.1102E-07" ixz="5.1075E-08" iyy="0.00011924" iyz="-2.1251E-06" izz="0.00026032" />
+      <origin rpy="0 0 0" xyz="0 -0.00677 -0.01098" />
+      <mass value="0.17" />
+      <inertia ixx="9.3e-05" ixy="-0.0" ixz="-0.0" iyy="5.87e-05" iyz="-3.6e-06" izz="0.000132" />
     </inertial>
   </link>
   <joint name="joint7" type="revolute">

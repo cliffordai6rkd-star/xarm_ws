@@ -2,7 +2,7 @@
 
 新版标定按 `--left` / `--right` 独立连接设备，先记录 GELLO 原点，再在终端输入
 轴号选择方向测试。唯一结果文件是 `config/xarm7_gello_calibration.yaml`；数采
-配置 `config/teleop/xarm7_gello_dual_dataset.yaml` 直接复用它。命令从仓库根目录执行。
+配置 `config/xarm7_gello_dual_dataset.yaml` 直接复用它。命令从仓库根目录执行。
 
 ## 1. 标定左臂与右臂
 
@@ -15,7 +15,7 @@ sg dialout -c '/home/eid/miniforge3/envs/gello/bin/python gello_teleop/calibrate
 ```
 
 两条命令分别运行；不会连接未选择的另一侧。也可显式添加
-`-c gello_teleop/config/teleop/xarm7_gello_dual_dataset.yaml`，默认就是该配置。
+`-c gello_teleop/config/xarm7_gello_dual_dataset.yaml`，默认就是该配置。
 
 1. 按提示托住 GELLO，按 Enter 关闭主手力矩。将 GELLO 手动摆到与 xArm
    当前参考姿态相对应的位置，并打开主手夹爪，保持静止后按 Enter 记录原点。
@@ -38,7 +38,7 @@ sg dialout -c '/home/eid/miniforge3/envs/gello/bin/python gello_teleop/calibrate
 
 ```bash
 python gello_teleop/calibrate_joint_directions.py --show-mapping
-python -m gello_teleop.dual_gello_collect -c gello_teleop/config/teleop/xarm7_gello_dual_dataset.yaml --check-config
+python -m gello_teleop.dual_gello_collect -c gello_teleop/config/xarm7_gello_dual_dataset.yaml --check-config
 ```
 
 主手夹爪的打开参考随原点保存，关闭参考暂按配置 `gripper_travel_deg: -42`
@@ -54,7 +54,7 @@ python -m gello_teleop.dual_gello_collect -c gello_teleop/config/teleop/xarm7_ge
 ## 2. 双臂、双相机、G1 夹爪采集
 
 ```bash
-sg dialout -c '/home/eid/miniforge3/envs/gello/bin/python -m gello_teleop.dual_gello_collect -c gello_teleop/config/teleop/xarm7_gello_dual_dataset.yaml'
+sg dialout -c '/home/eid/miniforge3/envs/gello/bin/python -m gello_teleop.dual_gello_collect -c gello_teleop/config/xarm7_gello_dual_dataset.yaml'
 ```
 
 入口读取统一标定结果。设备/相机检查通过后，两台 xArm 自动低速返回 `reset_q`，
@@ -89,13 +89,13 @@ G1 硬件速度分别设置在 `arms.left.gripper_speed` / `arms.right.gripper_s
 示例为 5000 r/min，初始化时下发；`-1` 保留原速度。夹爪 I/O 频率设置在
 `gripper.sample_rate_hz`（当前 20 Hz，支持不超过 30 Hz）。修改后重启数采。
 端点或跟随问题可在第二终端运行
-`python gello_teleop/inspect_gello_grippers.py -c gello_teleop/config/teleop/xarm7_gello_dual_dataset.yaml --left --watch`，
+`python gello_teleop/inspect_gello_grippers.py -c gello_teleop/config/xarm7_gello_dual_dataset.yaml --left --watch`，
 只读查看主手 ID8 原始角、闭合比例、目标/已发/实际开口。
 初始关闭角由打开角减 42° 推算，须根据实测松开与按到底读数修正对应侧
 `TeleoperatorConfig.gripper_open_deg/gripper_close_deg`；已有七轴标定保留。
 
 - `r` 开始录制。
-- 空格停止录制并自动保存，遥操状态保持不变。
+- Enter 或空格停止录制并自动保存，立即打印“停止录制”，并打印时长、样本数和保存路径；遥操状态保持不变。
 - `F/f` 让 xArm 与夹爪保持当前位置，GELLO 当前阻尼继续运行。
 - `o/O` 让两台 xArm 返回 `reset_q`，GELLO 保持原来的阻尼；必须按 `t` 才能再次接管。
 - `t/T` 使用电流位置插值将 GELLO 对齐到 xArm 当前保持姿态，恢复阻尼，自动核对采样通过后接管；失败直接报错。
@@ -107,10 +107,10 @@ G1 硬件速度分别设置在 `arms.left.gripper_speed` / `arms.right.gripper_s
 复位失败会报错并尝试原地保持，不清除设备故障；再次 Ctrl+C 可取消退出复位。
 连接未完成或仅检查配置时不执行退出复位；运行故障退出时直接尝试原地保持。
 
-只有 `r` 和空格启停录制。`F/t/o` 期间独立的 100 Hz 采样线程持续记录，
+只有 `r` 和 Enter/空格启停录制。`F/t/o` 期间独立的 100 Hz 采样线程持续记录，
 相机图像也继续写入同一 episode；`teleop_events` 记录操作区间。
 切换主手模式时，旧角度样本保留原来的时间戳并标记无效，不伪造新反馈。
-对齐或复位期间仍可按 `r` 开始录制、空格停止保存。
+对齐或复位期间仍可按 `r` 开始录制、Enter 或空格停止保存。
 所有 `visualize: true` 的相机在一个 `Nero cameras` 窗口显示，视角以配置的 `name` 标注。
 `left wrist` 对应 `419122271564`，`right wrist` 对应 `419122270270`；
 HDF5 的相机分组使用这两个名称，设备连接仍根据 `serial_number`。
@@ -130,7 +130,7 @@ USB by-id 名称可能显示不同编号，不能替代 SDK 序列号。
 
 ```bash
 python -m gello_teleop.dual_gello_collect \
-  -c gello_teleop/config/teleop/xarm7_gello_dual_dataset.yaml --reset-q
+  -c gello_teleop/config/xarm7_gello_dual_dataset.yaml --reset-q
 ```
 
 程序照常执行复位、对齐、遥操 pipeline。遥操到希望的位置后直接按 `s/S`，
@@ -169,10 +169,12 @@ python scripts/smoke_dual_gello_pipeline.py --real-cameras --duration 3 --output
 
 `dual_gello_collect` 支持顶层 `active_arms: [left]` 或 `[right]`，只连接、复位、
 对齐、控制和记录所选侧。未填写时默认 `[left, right]`；双臂记录始终按 left、right
-排列。当前 `xarm7_gello_dual_dataset.yaml` 已设置为 `[left]`。
+排列。
 未启用侧的 `arms` 和标定条目可以保留或移除；保存参考姿态只更新所选侧。
 单臂 HDF5 关节数据为 7 列，夹爪为 1 列，侧别写在 `arm_names` 中。
-相机独立按 `cameras` 配置启用；不需要右腕相机时在该相机条目设置 `enabled: false`。
+`active_arms` 及 `--left/--right/--both` 均不改变相机保存或预览。
+相机独立按 `cameras` 配置启用；不需要某台相机时在其条目设置 `enabled: false`，
+只关闭预览时设置 `visualize: false`，该相机仍连接并保存数据。
 
 遥操完成接管后，主手夹爪每次按下自动打印一行原始角度、闭合比例、映射开口、
 已发开口、实际开口及跟随状态；无需另开查看进程。启动时请松开主手夹爪，

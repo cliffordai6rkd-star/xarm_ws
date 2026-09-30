@@ -309,9 +309,9 @@ TeleoperatorConfig:
 ```
 
 上面的零增益和力矩限值仅展示字段格式，不能当作可运行参数。仓库附带的
-`models/xarm7_dynamics.urdf` 从 UFACTORY `xarm_ros2` 官方 xArm7 Xacro 生成，
-只保留关节、连杆和惯量，不包含已安装的夹爪或其他末端负载。因此它可用于
-软件验证，真机使用前应补齐实际负载的动力学参数。`dynamics_joint_names`
+`models/xarm7_dynamics.urdf` 使用 UFACTORY `xarm_ros2` 官方 xArm7
+`xarm7_type7_HT_BR2` 连杆参数，只保留关节、连杆和惯量，不包含已安装的夹爪或
+其他末端负载。真机使用前应补齐实际负载的动力学参数。`dynamics_joint_names`
 必须与 SDK 关节顺序一致。
 若 URDF 含可动夹爪关节，填入 `dynamics_locked_joint_names` 以得到七轴模型。
 配置缺失、关节顺序不符或复位姿态的重力超出力矩限值时，程序会在连接机器人前
@@ -443,7 +443,22 @@ python -m gello_teleop.dual_gello_collect \
 `reset_q`、GELLO 电流位置插值对齐、恢复阻尼并自动采样核对、全部通过后接管。
 取消人手微调等待：`alignment_samples` 指定核对次数，任一次误差超过
 `alignment_tolerance_rad` 或采样失败都立即报错停止接管。
-终端 `r` 开始新的 episode，空格停止录制并自动保存；遥操状态保持不变。
+终端 `r` 开始新的 episode，Enter 或空格停止录制并自动保存；遥操状态保持不变。
+收到停止键立即打印“停止录制”，保存日志包含 episode 长度（秒）、样本数和绝对保存路径。
+停止后由独立线程保存已冻结的 episode，终端、遥操和相机预览继续运行，可按 `r`
+录制下一集；保存队列按顺序写入并预留不同 episode 编号。退出时先停止并关闭设备，
+再等待已提交的保存任务完成。保存失败会报出目标路径并保留失败任务的内存数据。
+当前未录制时按 Enter 或空格也会打印提示。键盘操作需在启动程序的终端进行。
+相机按 `fps: 30` 采集，RGB 和对齐深度在采集进程内按 `output_size: [224, 224]`
+缩放后保存；深度使用最近邻缩放并保留 uint16 原始深度值。
+`output.camera_compression: null` 直接写 H5 原始数组，不做 gzip 压缩或视频编码。
+保存按小批次写入，日志报告每路相机的帧数、进度和最终写入耗时。
+关节数据按 `control.sample_rate_hz: 100` 保存；相机使用独立的 30 Hz 时间戳，
+不复制图像以匹配关节数据行数。预览尺寸可独立由 `preview_output_size` 设置。
+`control.maximum_lateness_s` 对运动控制线程保持严格超时检查。
+独立录制线程超过该阈值时打印警告，跳过过期时刻后继续采样，不补造样本。
+每行的采样延迟及 H5 元数据中的 `sampling_late_tick_count`、
+`sampling_skipped_tick_count`、`sampling_max_lateness_s` 可用于检查会话内的调度间隙。
 `F/f` 让 xArm 和夹爪保持当前位置，GELLO 阻尼继续运行；`o/O` 让 xArm 按复位速度
 返回 `reset_q`，随后等待 `t/T`。`t` 按启动时的电流位置插值流程将 GELLO 对齐到
 xArm 当前保持姿态，恢复阻尼并执行同样的自动采样核对，通过后接管，无需 Enter 或人手微调。
@@ -457,6 +472,118 @@ xArm 当前保持姿态，恢复阻尼并执行同样的自动采样核对，通
 退出复位超时、反馈无效或设备故障会报错，并尝试保持当前位置；不自动清除故障。
 退出复位期间再次按 Ctrl+C 可取消回位，仍尝试保持当前位置后关闭连接。
 异常退出直接尝试原地保持；连接尚未完成或仅 `--check-config` 时不复位。
+
+碰撞保护灵敏度可在数采配置中调整：
+
+```yaml
+control:
+  collision_sensitivity: 3
+arms:
+  left:
+    collision_sensitivity: 3  # 可选：覆盖公共值，右臂同理
+```
+
+支持整数 0～5：0 关闭碰撞检测，1 最不敏感、5 最敏感；`null` 保留控制器当前设置。
+[官方建议启用检测时不要低于 3](https://docs.ufactory.cc/user_manual/ufactoryStudio/7.settings.html)。
+下次启动、使能机械臂时下发；只检查配置或连接设备不会改变它，不写入控制器持久配置。
+该值是控制器碰撞检测等级，不能直接换算成固定的 N/Nm 上限。
+设为 0 时使能日志会提示碰撞检测已关闭；力矩图的低通滤波不影响控制器的碰撞检测。
+Bio Gripper G2 的 TCP 负载质量、质心和机械臂安装方向仍需与实机一致，设置不准确会误报。
+当前仍使用位置伺服；降低灵敏度不能保证持续接触，也不提供恒力或柔顺控制。
+触发 C31 时停止发送运动指令，日志同时报告侧别、控制器 C31 和 SDK 返回码，
+不自动清错、复位或重新使能；处理故障后需重新启动并对齐接管。
+
+数采配置默认开启 **七轴实测 / URDF 理论力矩对比图**。
+每行对应 J1～J7，单位 Nm；单臂七行两列，双臂七行四列：左臂实测、左臂理论、
+右臂实测、右臂理论。同一关节的实测 / 理论两列使用相同纵轴范围。
+窗口在连接检查时启动，启动复位和 GELLO 对齐期间也更新，
+未录制以及 `F/t/o` 期间持续运行；关窗或窗口内按 q/Esc 只关闭绘图。
+动力学计算和 GUI 在独立进程，通过有界非阻塞队列接收位置、速度、加速度和实测力矩，
+队列满时丢弃绘图样本，不阻塞控制或 H5 采样。图中不额外标注模型参数或近似说明。
+
+可用 `--left`、`--right`、`--both` 覆盖 YAML 的 `active_arms`，例如：
+
+```bash
+python -m gello_teleop.dual_gello_collect \
+  -c gello_teleop/config/xarm7_gello_dual_dataset.yaml --left
+```
+
+只连接所选侧的 xArm 和 GELLO。`active_arms` 和 `--left/--right/--both` 不影响相机：
+所有相机独立按 `cameras` 配置连接并保存，`enabled: false` 关闭对应相机，
+`visualize: true/false` 控制该相机预览。名称 `left wrist`、`right wrist` 和
+兼容字段 `arm: left/right` 都不会按机械臂选择过滤相机。
+GELLO 底层串口断连会报出侧别、串口路径、电机 ID 和操作，停止当次采集。
+
+模型列直接调用 Pinocchio `rnea(q, dq, ddq_filtered)`，计算
+`tau_model = M(q)ddq_filtered + C(q,dq)dq + g(q)`。
+单位为 rad、rad/s、rad/s² 和 Nm。加速度来自采集状态 `ddq`（xArm 适配器对速度反馈差分），
+先按 `acceleration_cutoff_hz` 做一阶低通，再送入 RNEA；RNEA 输出不再做力矩低通，
+也不再通过动量观测器计算。静止时输出重力力矩 `g(q)`。
+算法说明见 [Pinocchio 官方 RNEA 文档](https://github.com/stack-of-tasks/pinocchio/blob/devel/doc/a-features/g-dynamic.md)。
+
+实测列显示一阶低通后的 SDK 力矩，截止频率为 `measured_torque_cutoff_hz`。
+两项截止频率独立，默认均为 3 Hz（时间常数约 53 ms），支持标量或 J1..J7 七元素数组，
+可在 `sides.left/right` 分别覆盖。滤波使用实际反馈时间间隔 `dt`：
+`alpha = 1-exp(-2*pi*cutoff_hz*dt)`，`filtered = previous+alpha*(raw-previous)`。
+首个有效样本直接初始化，避免从零开始的过渡；重复样本不更新滤波状态。
+反馈缺失、无效或间隔超过 `stale_s` 时显示断线并重置对应滤波器。
+位置、速度或加速度不可用时不计算完整 RNEA，模型显示 `-- Nm`；实测力矩无效时实测列同样留空。
+不能将空图上的零轴视为计算结果。示例配置的 `arms.<side>.feedback_signal: torque`
+明确选择 SDK 力矩报告字段，而非电流。实测值只用于绘图和记录，不送入力矩控制或主手反馈。
+
+首次使用需在数采 Python 环境安装 `matplotlib>=3.7` 和 `pin>=3,<4`，并使用可用的 GUI 后端。
+无桌面运行时加 `--no-torque-plot`；也可用 `--torque-plot` 覆盖配置开启。
+配置示例（相对路径以数采 YAML 所在目录为基准）：
+
+```yaml
+torque_visualization:
+  enabled: true
+  urdf_path: ../models/xarm7_dynamics.urdf
+  measured_torque_cutoff_hz: 3.0  # 实测力矩一阶低通，Hz
+  acceleration_cutoff_hz: 3.0     # ddq 一阶低通，Hz
+  window_s: 30.0
+  update_hz: 10.0
+  stale_s: 0.15
+  payload:
+    source: controller  # 只读 SDK rich report 中的 TCP 负载
+  sides:
+    left:
+      gravity_m_s2: [0, 0, -9.81]  # 各臂基座坐标系中的重力
+    right:
+      gravity_m_s2: [0, 0, -9.81]
+```
+
+内置 `xarm7_dynamics.urdf` 使用官方 `xarm7_type7_HT_BR2` 惯量 YAML，七个运动连杆
+总质量为 10.4315 kg。源文件固定到
+[xarm_ros2 62936f7 的参数](https://github.com/xArm-Developer/xarm_ros2/blob/62936f7ea1846a85f7350de2c4c18f39e6d19715/xarm_description/config/link_inertial/xarm7_type7_HT_BR2.yaml)，
+副本为 `models/xarm7_type7_HT_BR2.yaml`；旧版 2.76914 kg 连杆模型保留为
+`models/xarm7_dynamics_legacy.urdf`，不再用于默认计算。这是官方当前默认的参数版本，
+不同实机版本仍可能需要替换对应 URDF，不能通过整体乘一个系数校正。
+
+Bio Gripper G2 官方质量为含转接板 0.79 kg，见
+[官方规格](https://docs.accessories.ufactory.cc/Bio_Gripper_G2/6.technical_specifications.html)。
+数采默认从 SDK `tcp_load` 属性读取 Studio 已设置的负载质量和法兰坐标系质心，
+将 mm 转为 m，再加到七轴模型末端；不发送 `set_tcp_load`，也不修改机器人设置。
+在 Studio 中选择官方 Bio-G2 预设即可，见
+[官方 TCP 设置说明](https://docs.accessories.ufactory.cc/Bio_Gripper_G2/3.control.html)。
+SDK 未报告正质量时，模型仅包含裸臂。负载变化时重置观测器，避免切换造成力矩尖峰。
+未提供夹爪自身的转动惯量时，末端按质点建模：计入重力和质心平动惯性，不包含夹爪绕质心
+的转动惯性。官方通用 BIO Xacro 的 G2 分支共用旧惯量，其质量总和约 0.4125 kg，
+与 G2 含转接板质量不符，因此没有将该惯量当作准确的 G2 参数直接使用。
+
+也可在 `sides.left/right.payload` 显式设置 `mass_kg`、`com_m`（法兰坐标系）和可选的
+`inertia_kg_m2`（质心处 3×3 矩阵），或用包含完整固定末端惯量的 URDF 并关闭附加 payload，
+避免重复计入。活动关节必须保持 `joint1..joint7` 顺序。
+模型不包含摩擦、电机偏置或未知末端相机负载。这些图仅用于实时查看。
+这两项滤波用于可视化。H5 保留原始实测力矩；读取失败时以 NaN 和有效性标记保存。
+离线验证布局可使用模拟运动，不连接硬件：
+
+```bash
+python -m xarm_stack.torque_visualization --demo --headless \
+  --duration 3 --save-plot /tmp/dual_torque.png
+```
+
+加 `--left` 或 `--right` 可预览单臂布局。
 
 双臂七轴电流可在另一个终端实时查看：
 

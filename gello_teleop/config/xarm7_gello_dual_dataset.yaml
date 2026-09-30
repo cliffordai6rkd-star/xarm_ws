@@ -1,8 +1,20 @@
-active_arms: [left,
-              # right
-]  # [left, right] 双臂；[left] 或 [right] 单臂
+active_arms: [
+              left,
+              right
+]  # [left, right] 双臂；[left] 或 [right] 单臂；不影响 cameras 的保存和预览
 # Hardware workflow: freshly measured calibration is required.
 gello_config: xarm7_gello_calibration.yaml
+torque_visualization:
+  enabled: true
+  urdf_path: ../models/xarm7_dynamics.urdf
+  measured_torque_cutoff_hz: 3.0  # 实测 tau 一阶低通截止频率，Hz
+  acceleration_cutoff_hz: 3.0  # 速度差分所得 ddq 一阶低通截止频率，Hz
+  window_s: 30.0
+  update_hz: 10.0
+  stale_s: 0.15
+  payload:
+    source: controller  # SDK rich report: Studio 中已设置的末端负载质量和法兰系质心
+  sides: {}  # left/right 可覆盖模型、重力、截止频率和末端负载
 # 主手电流阻尼：覆盖 gello_config 中的设置，不改原点/方向。
 # J1..J7 顺序，低强度初始值，须实机调参；原始电流单位不是 Nm。
 gello_damping:
@@ -34,6 +46,7 @@ alignment:
   reset_samples: 5
   alignment_tolerance_rad: 0.1
 control:
+  collision_sensitivity: 0  # 0 关闭碰撞检测；1 最不敏感，5 最敏感；null 保留控制器设置
   sample_rate_hz: 100.0
   leader_max_age_s: 0.15
   leader_startup_timeout_s: 0.5  # 接管前等待两侧连续新样本，仅用于启动
@@ -43,8 +56,8 @@ control:
   maximum_lateness_s: 0.03
   position_mode: second_order
   # 逐轴参考轨迹增益，数组顺序 J1..J7；左右臂共用，非电机力矩增益
-  kp: [20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0]
-  kd: [6.0, 6.0, 6.0, 6.0, 6.0, 6.0, 6.0]
+  kp: [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0]
+  kd: [20.0, 20, 20,20, 20.0, 20.0, 20]
   max_velocity_rad_s: 2
   max_acceleration_rad_s2: 4.0
   max_step_rad: 0.01
@@ -56,7 +69,7 @@ arms:
   left:
     execution_enabled: true
     servo_mode: 1
-    feedback_signal: torque
+    feedback_signal: torque  # 实测 / URDF 并排可视化；不将该力矩用于遥操控制
     velocity_source: hardware
     gripper_speed: 5000  # G1 硬件速度（r/min），初始化时下发；-1 保留控制器设置
     gripper_open_position: 800
@@ -82,25 +95,37 @@ gripper:
   sample_rate_hz: 20.0
   max_speed_m_s: 0.02  # 仅 control_mode: rate_limited_position 时生效
 require_cameras: true
-cameras:
-- name: 'left wrist'
-  backend: realsense
-  serial_number: '419122271564'
-  width: 640
-  height: 480
-  fps: 30
-  depth: true
-  visualize: true  # 所有启用的视角拼接到同一个预览窗口
-- name: 'right wrist'
-  backend: realsense
-  serial_number: '419122270270'
-  width: 640
-  height: 480
-  fps: 30
-  depth: true
-  visualize: true
+# cameras:
+# - name: 'front'
+#   backend: realsense
+#   serial_number: '262722072129'
+#   width: 640
+#   height: 480
+#   fps: 30
+#   output_size: [224, 224]  # 保存 RGB/深度的尺寸；相机采集仍为 640x480@30 Hz
+#   depth: true
+#   visualize: true  
+# - name: 'left wrist'
+#   backend: realsense
+#   serial_number: '419122271564'
+#   width: 640
+#   height: 480
+#   fps: 30
+#   output_size: [224, 224]  # 保存 RGB/深度的尺寸；相机采集仍为 640x480@30 Hz
+#   depth: true
+#   visualize: true  # 所有启用的视角拼接到同一个预览窗口
+# - name: 'right wrist'
+#   backend: realsense
+#   serial_number: '419122270270'
+#   width: 640
+#   height: 480
+#   fps: 30
+#   output_size: [224, 224]  # 保存 RGB/深度的尺寸；相机采集仍为 640x480@30 Hz
+#   depth: true
+#   visualize: true
 output:
-  directory: ../../episodes/test
+  camera_compression: null  # 缩放后的原始数组直接写 H5，不做 gzip/视频编码
+  directory: ../../runs/wipe_board_rightarm
   prefix: dual_gello_xarm
   discard_initial_s: 0.0
 gello_template: xarm7_gello_teleop_dual.yaml

@@ -1,5 +1,16 @@
 # Hardware workflow: freshly measured calibration is required.
 gello_config: xarm7_gello_calibration.yaml
+torque_visualization:
+  enabled: true
+  urdf_path: ../models/xarm7_dynamics.urdf
+  measured_torque_cutoff_hz: 3.0  # 实测 tau 一阶低通截止频率，Hz
+  acceleration_cutoff_hz: 3.0  # 速度差分所得 ddq 一阶低通截止频率，Hz
+  window_s: 30.0
+  update_hz: 10.0
+  stale_s: 0.15
+  payload:
+    source: controller  # SDK rich report: Studio 中已设置的末端负载质量和法兰系质心
+  sides: {}
 # 主手电流阻尼：覆盖 gello_config 中的设置，不改原点/方向。
 # J1..J7 顺序，低强度初始值，须实机调参；原始电流单位不是 Nm。
 gello_damping:
@@ -31,6 +42,7 @@ alignment:
   reset_samples: 5
   alignment_tolerance_rad: 0.05
 control:
+  collision_sensitivity: 3  # 0 关闭碰撞检测；1 最不敏感，5 最敏感；官方建议 >=3；null 保留控制器设置
   sample_rate_hz: 100.0
   leader_max_age_s: 0.15
   leader_startup_timeout_s: 2.0  # 接管前等待两侧连续新样本，仅用于启动
@@ -53,7 +65,7 @@ arms:
   left:
     execution_enabled: true
     servo_mode: 1
-    feedback_signal: torque
+    feedback_signal: torque  # 实测 / URDF 并排可视化；不将该力矩用于遥操控制
     velocity_source: hardware
     gripper_speed: 5000  # G1 硬件速度（r/min），初始化时下发；-1 保留控制器设置
     gripper_open_position: 800
@@ -84,6 +96,7 @@ cameras:
   width: 640
   height: 480
   fps: 30
+  output_size: [224, 224]  # 保存 RGB/深度的尺寸；相机采集仍为 640x480@30 Hz
   depth: true
   visualize: true  # 所有启用的视角拼接到同一个预览窗口
 - name: 'right wrist'
@@ -92,9 +105,11 @@ cameras:
   width: 640
   height: 480
   fps: 30
+  output_size: [224, 224]  # 保存 RGB/深度的尺寸；相机采集仍为 640x480@30 Hz
   depth: true
   visualize: true
 output:
+  camera_compression: null  # 缩放后的原始数组直接写 H5，不做 gzip/视频编码
   directory: ../../episodes/full_pipeline
   prefix: dual_gello_full
   discard_initial_s: 0.0

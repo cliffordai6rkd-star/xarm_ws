@@ -34,6 +34,7 @@ class FixedRateTicker:
         sample_rate_hz: float,
         maximum_lateness_s: float,
         *,
+        strict: bool = True,
         monotonic: Callable[[], float] | None = None,
         sleep: Callable[[float], None] | None = None,
     ) -> None:
@@ -44,6 +45,8 @@ class FixedRateTicker:
             raise ValueError("maximum_lateness_s must be positive and finite")
         self.period_s = 1.0 / rate
         self.maximum_lateness_s = float(maximum_lateness_s)
+        self.strict = strict
+        self.last_skipped_ticks = 0
         self._monotonic = time.monotonic if monotonic is None else monotonic
         self._sleep = time.sleep if sleep is None else sleep
         self._started_s = self._monotonic()
@@ -56,15 +59,20 @@ class FixedRateTicker:
         lateness_s = 0.0
         if remaining_s > 0.0:
             self._sleep(remaining_s)
-        else:
-            lateness_s = -remaining_s
+        lateness_s = max(0., self._monotonic()-deadline_s)
+        self.last_skipped_ticks = 0
+        if self.strict:
             if tick_index > 0 and lateness_s > self.maximum_lateness_s:
                 raise RuntimeError(
                     f"fixed-rate collection missed deadline by {lateness_s:.4f}s "
                     f"at tick {tick_index}; limit={self.maximum_lateness_s:.4f}s; "
                     f"context={context}"
                 )
-        self._tick_index += 1
+        else:
+            # A recorder can resume on the next grid tick after a scheduling
+            # gap. Never burst through missed ticks or invent samples for them.
+            self.last_skipped_ticks = int(lateness_s/self.period_s)
+        self._tick_index += 1+self.last_skipped_ticks
         return tick_index, lateness_s
 
 

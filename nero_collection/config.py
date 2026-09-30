@@ -25,6 +25,11 @@ class OutputConfig:
     directory: Path
     prefix: str = "episode"
     discard_initial_s: float = 2.0
+    camera_compression: str | None = 'gzip'
+
+    def __post_init__(self):
+        if self.camera_compression not in (None, 'gzip', 'lzf'):
+            raise ValueError('output.camera_compression must be null, gzip, or lzf')
 
 
 @dataclass(frozen=True)
@@ -512,6 +517,7 @@ def _parse_output(data: dict[str, Any], base_dir: Path) -> OutputConfig:
         directory=directory,
         prefix=str(data.get("prefix", "episode")),
         discard_initial_s=discard_initial_s,
+        camera_compression=data.get('camera_compression', 'gzip'),
     )
 
 

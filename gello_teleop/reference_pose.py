@@ -21,7 +21,7 @@ from gello_teleop.uf_robot_gello_teleop import load_configs
 
 SIDES = ('left', 'right')
 log = logging.getLogger(__name__)
-DEFAULT_CONFIG = Path(__file__).resolve().parent/'config/teleop/xarm7_gello_dual_dataset.yaml'
+DEFAULT_CONFIG = Path(__file__).resolve().parent/'config/xarm7_gello_dual_dataset.yaml'
 
 
 def live_pose_path(config_path):

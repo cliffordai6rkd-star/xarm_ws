@@ -38,7 +38,7 @@ class StaticLeader:
 
 @pytest.fixture
 def live_pipeline(tmp_path, request):
-    path = write_simulation_config(ROOT/'gello_teleop/config/teleop/xarm7_gello_dual_dataset.yaml', tmp_path)
+    path = write_simulation_config(ROOT/'gello_teleop/config/xarm7_gello_dual_dataset.yaml', tmp_path)
     workflow = yaml.safe_load(path.read_text())
     workflow['active_arms'] = ['left', 'right']
     workflow['gripper']['mode'] = 'follow'
@@ -440,9 +440,12 @@ def test_keypress_save_fails_immediately_on_locked_calibration_and_keeps_pipelin
 def test_online_reference_save_preserves_episode_and_configured_camera_streams(tmp_path):
     import h5py
     from scripts.smoke_dual_gello_pipeline import SimulatedLeader
-    config = write_simulation_config(ROOT/'gello_teleop/config/teleop/xarm7_gello_dual_dataset.yaml', tmp_path)
+    config = write_simulation_config(ROOT/'gello_teleop/config/xarm7_gello_dual_dataset.yaml', tmp_path)
     workflow = yaml.safe_load(config.read_text())
     workflow['active_arms'] = ['left', 'right']
+    workflow.setdefault('cameras', [dict(name=f'{owner} wrist', backend='mock', width=64,
+                                        height=48, fps=30, output_size=[224, 224])
+                                    for owner in ('left', 'right')])
     workflow['gripper']['mode'] = 'follow'
     config.write_text(yaml.safe_dump(workflow))
     pipeline = DualGelloPipeline(config, arm_factory=SimulatedArm, reader_factory=SimulatedLeader)
@@ -461,7 +464,8 @@ def test_online_reference_save_preserves_episode_and_configured_camera_streams(t
         with h5py.File(output) as episode:
             timestamps = episode['teleop/timestamp_us'][:]
             assert len(timestamps) >= 30 and np.all(np.diff(timestamps) > 0)
-            assert set(episode['cameras']) == {'left wrist', 'right wrist'}
+            assert set(episode['cameras']) == {camera['name'] for camera in workflow['cameras']
+                                              if camera.get('enabled', True)}
             for camera in episode['cameras'].values():
                 assert len(camera['frames']) >= 5
             metadata = json.loads(episode['metadata/episode_json'][()])

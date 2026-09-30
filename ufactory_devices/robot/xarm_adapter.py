@@ -24,6 +24,32 @@ from nero_collection.time_utils import now_us
 log = logging.getLogger(__name__)
 
 
+def validate_collision_sensitivity(value) -> int | None:
+    """None retains the controller setting; 0 disables collision detection."""
+    if value is None:
+        return None
+    try:
+        level = float(value)
+    except (TypeError, ValueError):
+        raise ValueError('collision_sensitivity must be an integer from 0 to 5, or null') from None
+    if isinstance(value, bool) or not np.isfinite(level) or level != int(level) or not 0 <= level <= 5:
+        raise ValueError('collision_sensitivity must be an integer from 0 to 5, or null')
+    return int(level)
+
+
+class XArmControllerFault(RuntimeError):
+    """A controller protection/fault, distinct from a generic SDK return code."""
+
+    def __init__(self, arm_name, error_code, *, operation=None, api_code=None):
+        self.arm_name, self.error_code = arm_name, int(error_code)
+        self.operation, self.api_code = operation, api_code
+        detail = '碰撞导致电流异常' if self.error_code == 31 else '控制器故障'
+        prefix = f'xArm {arm_name}' + (f' {operation}' if operation else '')
+        sdk = f'; SDK API code {api_code}' if api_code is not None else ''
+        super().__init__(f'{prefix} reports controller error code {self.error_code} '
+                         f'(C{self.error_code}: {detail}){sdk}; 手动处理故障后再使能并重新对齐接管')
+
+
 @dataclass
 class XArmAdapter:
     """Common xArm adapter for xArm5, xArm6 and xArm7.
@@ -68,10 +94,26 @@ class XArmAdapter:
         if self.config.rest_q and len(self.config.rest_q) != self.dof:
             raise ValueError(f"rest_q has {len(self.config.rest_q)} values but dof={self.dof}")
         self._configured_gripper_speed()
+        validate_collision_sensitivity(self.config.config_kwargs.get('collision_sensitivity'))
 
     @property
     def feedback_available(self) -> bool:
         return self._feedback_available
+
+    @property
+    def reported_tcp_payload(self) -> dict | None:
+        """Read the SDK rich-report cache, without sending a hardware command."""
+        if self._arm is None:
+            return None
+        load = getattr(self._arm, 'tcp_load', None)
+        try:
+            mass, com_mm = load
+            mass, com = float(mass), np.asarray(com_mm, dtype=float)
+            if not np.isfinite(mass) or mass <= 0 or com.shape != (3,) or not np.isfinite(com).all():
+                return None
+        except (TypeError, ValueError):
+            return None
+        return {'mass_kg': mass, 'com_m': (com/1000.).tolist()}
 
     @property
     def capabilities(self) -> dict[str, bool | str]:
@@ -180,6 +222,17 @@ class XArmAdapter:
         self._require_arm()
         self._require_execution("enable")
         self._raise_if_faulted()
+        sensitivity = validate_collision_sensitivity(self.config.config_kwargs.get('collision_sensitivity'))
+        if sensitivity is not None:
+            # Apply while stopped; changing this setting can put firmware in
+            # state 5, so the normal mode/state setup below must follow it.
+            self._check_result(self._call('set_collision_sensitivity', sensitivity, wait=False, required=True),
+                               'set_collision_sensitivity')
+            if sensitivity == 0:
+                log.warning('xArm %s collision_sensitivity=0: 控制器碰撞检测已关闭', self.name)
+            else:
+                log.info('xArm %s collision_sensitivity=%d (1 least sensitive, 5 most sensitive)',
+                         self.name, sensitivity)
         self._check_result(self._call("motion_enable", True, required=True), "motion_enable")
         self._enabled = True
         if str(self.config.config_kwargs.get("feedback_signal", "none")).lower() in {"torque", "current"}:
@@ -286,7 +339,7 @@ class XArmAdapter:
             result = self._call("set_servo_angle", angle=q.tolist(), speed=speed, mvacc=acceleration, is_radian=True, wait=False, required=True)
         else:
             raise ValueError("servo_api must be set_servo_angle_j or set_servo_angle")
-        self._check_result(result, api)
+        self._check_motion_result(result, api)
         self._last_commanded_q = q.copy()
         if self._last_command_timestamp_us is not None:
             self._command_intervals_s.append(max(0.0, (now_us() - self._last_command_timestamp_us) * 1e-6))
@@ -360,7 +413,7 @@ class XArmAdapter:
         self._require_execution('hold_position')
         if not self._enabled:
             raise RuntimeError(f'xArm {self.name} must be enabled before position hold')
-        self._check_result(self._call('set_state', 4, required=True), 'hold set_state(4)')
+        self._check_motion_result(self._call('set_state', 4, required=True), 'hold set_state(4)')
         self._raise_if_faulted()
         q = self._validate_vector(self._read_q(arm)[0], 'hold q')
         self.move_to_reset(q, speed=speed, acceleration=acceleration)
@@ -429,12 +482,12 @@ class XArmAdapter:
 
     def _read_feedback(self, arm: Any, q: np.ndarray, dt: float | None) -> tuple[np.ndarray, np.ndarray, np.ndarray, bool]:
         del q
-        report = self._call("get_joint_states", is_radian=True, required=False)
+        signal = str(self.config.config_kwargs.get("feedback_signal", "none")).lower()
+        report = self._call("get_joint_states", is_radian=True, num=2 if signal == 'none' else 3, required=False)
         # Public xArm SDK format is (code, [position, velocity, effort]).
         # ``effort`` is selected by set_report_tau_or_i(): it is either a
         # torque report or a motor-current report, never both at once.
         velocity = _extract_joint_state_component(report, 1, self.dof)
-        signal = str(self.config.config_kwargs.get("feedback_signal", "none")).lower()
         if signal not in {"none", "torque", "current"}:
             raise ValueError("feedback_signal must be none, torque, or current")
         effort = _extract_joint_state_component(report, 2, self.dof)
@@ -485,14 +538,29 @@ class XArmAdapter:
         if not bool(self.config.config_kwargs.get("execution_enabled", False)):
             raise RuntimeError(f"xArm execution is disabled; set execution_enabled=true explicitly before {operation}")
 
-    def _raise_if_faulted(self) -> None:
+    def _raise_if_faulted(self, *, operation=None, api_code=None) -> None:
         result = self._call("get_err_warn_code", required=False)
         if result is None:
             return
+        self._check_result(result, 'get_err_warn_code')
         value = result[1] if isinstance(result, tuple) and len(result) >= 2 else result
         error = _first_numeric(value, 0.0)
         if int(error) != 0:
-            raise RuntimeError(f"xArm {self.name} reports error code {int(error)}; clear it manually before enabling")
+            raise XArmControllerFault(self.name, int(error), operation=operation, api_code=api_code)
+
+    def _check_motion_result(self, result, operation):
+        try:
+            self._check_result(result, operation)
+        except RuntimeError as exc:
+            # No extra SDK requests during successful 100 Hz servoing. Query
+            # the actual controller cause only when a command was rejected.
+            try:
+                self._raise_if_faulted(operation=operation, api_code=self._result_code(result))
+            except XArmControllerFault as fault:
+                raise fault from exc
+            except Exception:
+                log.debug('Controller fault details unavailable for %s', self.name, exc_info=True)
+            raise RuntimeError(f'{self.name}: {exc}') from exc
 
     def _servo_mode(self) -> int:
         return int(self.config.config_kwargs.get("servo_mode", 1))
@@ -548,7 +616,7 @@ class XArmAdapter:
         return result
 
     @staticmethod
-    def _check_result(result: Any, operation: str) -> None:
+    def _result_code(result: Any) -> int:
         if isinstance(result, (int, np.integer)):
             code = int(result)
         elif isinstance(result, tuple) and result and isinstance(result[0], (int, np.integer)):
@@ -557,6 +625,11 @@ class XArmAdapter:
             code = int(result["code"])
         else:
             code = 0
+        return code
+
+    @staticmethod
+    def _check_result(result: Any, operation: str) -> None:
+        code = XArmAdapter._result_code(result)
         if code != 0:
             raise RuntimeError(f"xArm {operation} failed with code {code}")
 

@@ -93,14 +93,16 @@ def inspect_episode(path):
         if not causal.any() or np.any(g['q_cmd_timestamp_us'][:][causal] > g['q_follower_acquired_timestamp_us'][:][causal]):
             raise RuntimeError('Joint commands are not causal at follower acquisition')
         valid = g['gripper_cmd_valid'][:].astype(bool)
-        if not np.all(valid.any(axis=0)) or not np.all(g['gripper_follower_valid'][:].any(axis=0)):
-            raise RuntimeError('Both gripper command and feedback channels must be present')
+        metadata = json.loads(h5['metadata/episode_json'][()])
+        if (not np.all(g['gripper_follower_valid'][:].any(axis=0))
+                or (metadata.get('gripper_mode') != 'trigger' and not np.all(valid.any(axis=0)))):
+            raise RuntimeError('Active gripper command and feedback channels must be present')
         if np.any(g['gripper_cmd_timestamp_us'][:][valid] > g['q_follower_acquired_timestamp_us'][:][valid]):
             raise RuntimeError('Gripper commands are not causal')
         if np.any(g['gripper_cmd'][:][valid]<0) or np.any(g['gripper_cmd'][:][valid]>.085):
             raise RuntimeError('Gripper width outside G1 interval')
         cameras = {}
-        for name, camera in h5['cameras'].items():
+        for name, camera in h5.get('cameras', {}).items():
             timestamps = camera['timestamp_us'][:]
             if len(timestamps)<2 or not np.all(np.diff(timestamps)>0):
                 raise RuntimeError(f'Invalid camera timeline {name}')
@@ -129,6 +131,7 @@ def write_simulation_config(config_path, directory, real_cameras=False):
     raw['gello_config'] = str(calibration)
     # Synthetic readers never energize motors or claim to validate haptics.
     raw['gello_damping'] = {'enabled': False}
+    raw['torque_visualization'] = {'enabled': False}
     raw.setdefault('alignment', {}).pop('gello_hold_current_raw', None)
     for arm in raw['arms'].values():
         arm['execution_enabled'] = False
@@ -172,7 +175,7 @@ def run_smoke(config_path, output, duration=2., real_cameras=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config', default=str(ROOT/'gello_teleop/config/teleop/xarm7_gello_dual_dataset.yaml'))
+    parser.add_argument('--config', default=str(ROOT/'gello_teleop/config/xarm7_gello_dual_dataset.yaml'))
     parser.add_argument('--output', required=True)
     parser.add_argument('--duration', type=float, default=2.)
     parser.add_argument('--real-cameras', action='store_true')

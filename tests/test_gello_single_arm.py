@@ -12,7 +12,147 @@ from gello_teleop.inspect_gello_grippers import read_gripper_status
 from gello_teleop.reference_pose import capture_current_pose, overwrite_reference_pose
 from scripts.smoke_dual_gello_pipeline import SimulatedArm, SimulatedLeader, write_simulation_config
 
-CONFIG = 'gello_teleop/config/teleop/xarm7_gello_dual_dataset.yaml'
+CONFIG = 'gello_teleop/config/xarm7_gello_dual_dataset.yaml'
+
+
+@pytest.mark.parametrize('active_level', [0, 2.5, 3])
+def test_collision_validation_uses_only_active_arm_effective_setting(tmp_path, active_level):
+    path = write_simulation_config(CONFIG, tmp_path)
+    raw = yaml.safe_load(path.read_text())
+    raw['control']['collision_sensitivity'] = 6
+    raw['arms']['left']['collision_sensitivity'] = active_level
+    raw['arms']['right']['collision_sensitivity'] = 6
+    path.write_text(yaml.safe_dump(raw))
+    if active_level == 2.5:
+        with pytest.raises(ValueError, match='collision_sensitivity'):
+            DualGelloPipeline(path, active_arms=['left'])
+    else:
+        pipeline = DualGelloPipeline(path, active_arms=['left'])
+        assert pipeline.collection_config.teleop.master_slave[0].follower.config_kwargs['collision_sensitivity'] == active_level
+        pipeline.close()
+
+
+@pytest.mark.parametrize('side', ['left', 'right'])
+def test_arm_override_filters_devices_and_theoretical_plot_but_keeps_all_cameras(tmp_path, side):
+    from pathlib import Path
+    from unittest.mock import Mock
+    from xarm_stack.torque_visualization import DEFAULT_URDF
+    path = write_simulation_config(CONFIG, tmp_path)
+    raw = yaml.safe_load(path.read_text())
+    raw['active_arms'] = ['left', 'right']
+    inactive = 'right' if side == 'left' else 'left'
+    raw['torque_visualization'] = dict(enabled=True, urdf_path=str(DEFAULT_URDF),
+                                     sides={inactive: {'urdf_path': '/missing/inactive.urdf'}})
+    raw.setdefault('cameras', [dict(name=f'{owner} wrist', arm=owner, backend='mock',
+                                    width=64, height=48) for owner in ('left', 'right')])
+    raw['cameras'].append(dict(name='scene', backend='mock', width=64, height=48))
+    path.write_text(yaml.safe_dump(raw))
+    calibration = Path(raw['gello_config'])
+    saved = yaml.safe_load(calibration.read_text())
+    saved.pop(inactive)
+    calibration.write_text(yaml.safe_dump(saved))
+    pipeline = DualGelloPipeline(path, active_arms=[side], arm_factory=SimulatedArm,
+                                 reader_factory=SimulatedLeader)
+    assert set(pipeline.torque_visualizer.cfg['sides']) == {side}
+    expected_cameras = {camera['name'] for camera in raw['cameras'] if camera.get('enabled', True)}
+    assert {camera.name for camera in pipeline.collection_config.cameras} == expected_cameras
+    assert yaml.safe_load(pipeline.collection_config.raw_yaml)['active_arms'] == [side]
+    plot = pipeline.torque_visualizer = Mock()
+    try:
+        pipeline.connect()
+        # Plot is fed before GELLO alignment or takeover, even without effort.
+        assert plot.publish.called
+        assert plot.publish.call_args.args[0] == (side,)
+        assert [arm.name for arm in pipeline.arms] == [side]
+        assert len(pipeline.readers) == 1
+    finally:
+        pipeline.close()
+    plot.close.assert_called_once()
+
+
+@pytest.mark.parametrize('active', [['left'], ['right'], ['left', 'right']])
+def test_arm_selection_keeps_camera_rgb_depth_recording_and_preview(tmp_path, monkeypatch, active):
+    import numpy as np
+    from unittest.mock import Mock
+    from nero_collection.cameras import CameraFrame
+    from nero_collection.time_utils import now_us
+
+    path = write_simulation_config(CONFIG, tmp_path)
+    raw = yaml.safe_load(path.read_text())
+    raw['active_arms'] = active
+    raw['gripper'] = dict(enabled=False, command_enabled=False)
+    raw['cameras'] = [
+        dict(name='left wrist', arm='left', backend='mock', width=16, height=12,
+             depth=True, visualize=True),
+        dict(name='right wrist', arm='right', backend='mock', width=16, height=12,
+             depth=True, visualize=True),
+        dict(name='scene', backend='mock', width=16, height=12, visualize=False),
+        dict(name='disabled', arm='left', backend='mock', enabled=False, visualize=True),
+    ]
+    path.write_text(yaml.safe_dump(raw))
+    pipeline = DualGelloPipeline(path, arm_factory=SimulatedArm, reader_factory=SimulatedLeader)
+    preview = pipeline.camera_manager.visualizer
+    assert preview.camera_names == frozenset({'left wrist', 'right wrist'})
+    monkeypatch.setattr(preview, 'start', Mock())
+    monkeypatch.setattr(preview, 'stop', Mock())
+    submitted = []
+    def submit(frame):
+        if frame.camera_name in preview.camera_names:
+            submitted.append(frame)
+    monkeypatch.setattr(preview, 'submit', submit)
+    try:
+        pipeline.connect()
+        assert [arm.name for arm in pipeline.arms] == active
+        assert {camera.name for camera in pipeline.camera_manager.cameras} == {
+            'left wrist', 'right wrist', 'scene'}
+        pipeline.reset()
+        pipeline.confirm_alignment()
+        pipeline.takeover()
+        pipeline.start_episode()
+        submitted.clear()
+        expected = {}
+        for index, camera in enumerate(pipeline.camera_manager.cameras, 1):
+            rgb = np.full((12, 16, 3), index, dtype=np.uint8)
+            depth = np.full((12, 16), index*100, dtype=np.uint16) if camera.config.depth else None
+            frame = CameraFrame(camera.name, now_us(), rgb, depth=depth)
+            expected[camera.name] = frame
+            # Inject one distinct acquired frame per camera through the actual
+            # manager, preview dispatch and episode recording paths.
+            frames = iter((frame,))
+            monkeypatch.setattr(camera, 'poll', Mock(side_effect=lambda source=frames: next(source, None)))
+        pipeline._poll_cameras()
+        assert {frame.camera_name for frame in submitted} == {'left wrist', 'right wrist'}
+        pipeline._consume_samples()
+        pipeline.stop_episode(save=False)
+        output = tmp_path/'all_cameras.h5'
+        pipeline.buffer.save(output)
+        with h5py.File(output) as episode:
+            assert set(episode['cameras']) == set(expected)
+            for name, frame in expected.items():
+                group = episode[f'cameras/{name}']
+                np.testing.assert_array_equal(group['frames'][0], frame.frame)
+                assert group['timestamp_us'][0] == frame.timestamp_us
+                if frame.depth is not None:
+                    np.testing.assert_array_equal(group['depth'][0], frame.depth)
+                else:
+                    assert 'depth' not in group
+    finally:
+        pipeline.close()
+
+
+@pytest.mark.parametrize('flag,expected', [('--left', ['left']), ('--right', ['right']),
+                                         ('--both', ['left', 'right'])])
+def test_cli_arm_selection_is_read_only_for_check_config(tmp_path, monkeypatch, flag, expected):
+    import gello_teleop.dual_gello_collect as collect
+    path = write_simulation_config(CONFIG, tmp_path)
+    constructed = []
+    actual = collect.DualGelloPipeline
+    def factory(config, **kwargs):
+        constructed.append(kwargs)
+        return actual(config, **kwargs)
+    monkeypatch.setattr(collect, 'DualGelloPipeline', factory)
+    assert collect.main(['-c', str(path), flag, '--check-config']) == 0
+    assert constructed == [{'active_arms': expected}]
 
 
 @pytest.mark.parametrize('gripper_mode', ['follow', 'trigger'])
