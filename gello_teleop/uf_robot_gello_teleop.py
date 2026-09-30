@@ -289,18 +289,27 @@ def save_current_alignment(source_path, destination_path, configs, mappers):
     return destination
 
 
-def load_configs(path, dual=False, require_calibrated=None, calibration_path=None):
+def load_configs(path, dual=False, require_calibrated=None, calibration_path=None, side=None):
     config_path = Path(path).expanduser().resolve()
     with open(config_path) as stream:
         data = yaml.safe_load(stream)
     if calibration_path is not None:
         with open(Path(calibration_path).expanduser()) as stream:
             data = apply_saved_calibration(data, yaml.safe_load(stream))
-    entries = [(name, data[name]) for name in ('left', 'right')] if dual else [('arm', data)]
+    if side is not None and (not dual or side not in ('left', 'right')):
+        raise ValueError('side requires dual=True and left or right')
+    entries = [(name, data[name]) for name in ([side] if side else ('left', 'right'))] if dual else [('arm', data)]
     if require_calibrated is None:
         require_calibrated = False
     result = []
     for name, entry in entries:
+        status = entry.get('CalibrationStatus')
+        if require_calibrated and status is not None and (
+                status.get('reference_ready') is not True or
+                not status.get('direction_verified') or
+                not all(v is True for v in status['direction_verified']) or
+                len(status['direction_verified']) != len(entry['TeleoperatorConfig']['joint_ids'])):
+            raise ValueError(f'{name}: 原点或关节方向尚未全部标定；运行 calibrate_joint_directions.py --{name}')
         robot = GelloRobotConfig(**entry['RobotConfig'])
         leader = GelloTeleopConfig(**entry['TeleoperatorConfig'])
         if leader.dynamics_urdf is not None:
@@ -316,7 +325,7 @@ def load_configs(path, dual=False, require_calibrated=None, calibration_path=Non
                 f'{name}: calibrated joint_offsets/leader_reference_q are required; '
                 'run calibrate_joint_directions.py first')
         result.append((name, robot, leader))
-    if dual:
+    if dual and side is None:
         if result[0][2].leader_passive != result[1][2].leader_passive:
             raise ValueError('Both GELLO sides must use the same leader_passive mode')
         if any(mapper[2].joint_offsets is not None for mapper in result) and not all(
@@ -343,26 +352,32 @@ class JointMapper:
             raise ValueError('Invalid GELLO joint sample')
         return raw
 
-    def align(self, raw):
+    def align(self, raw, reference_q=None):
         raw = self._sample(raw)
+        reference = np.asarray(self.robot.reset_q if reference_q is None else reference_q, dtype=float)
+        if reference.shape != (self.n,) or not np.isfinite(reference).all():
+            raise ValueError('Invalid alignment reference joints')
         if self.config.joint_offsets is not None:
             self.offsets = np.asarray(self.config.joint_offsets, dtype=float)
             if self.config.leader_passive:
                 # Torque-off feedback can differ by full turns after power cycling.
                 # Select the saved reference's equivalent encoder branch ONCE;
                 # retain continuous feedback and jump detection during following.
-                turns = np.rint((raw[:self.n] - self.config.leader_reference_q) / (2 * np.pi))
+                reference_raw = (self.config.leader_reference_q if reference_q is None else
+                                 self.offsets + reference / self.config.joint_signs)
+                turns = np.rint((raw[:self.n] - reference_raw) / (2 * np.pi))
                 self.offsets = self.offsets + turns * (2 * np.pi)
                 q = (raw[:self.n] - self.offsets) * self.config.joint_signs
-                if np.max(np.abs(q - self.robot.reset_q)) > np.deg2rad(self.config.passive_start_tolerance_deg):
-                    error = np.rad2deg(q - self.robot.reset_q)
-                    raise ValueError(f'主手未回到保存的参考姿态，各轴误差(度)={np.round(error, 2)}；'
+                if np.max(np.abs(q - reference)) > np.deg2rad(self.config.passive_start_tolerance_deg):
+                    error = np.rad2deg(q - reference)
+                    label = '保存的参考姿态' if reference_q is None else '当前 xArm 保持姿态'
+                    raise ValueError(f'主手未回到{label}，各轴误差(度)={np.round(error, 2)}；'
                                      f'允许各轴偏差 {self.config.passive_start_tolerance_deg:g}°；'
                                      '请大致摆回参考姿态后重新启动；不会重算零点')
         else:
-            self.offsets = raw[:self.n] - np.asarray(self.robot.reset_q) / self.config.joint_signs
+            self.offsets = raw[:self.n] - reference / self.config.joint_signs
         self.leader_reference_q = raw[:self.n].copy()
-        self.last_raw = np.asarray(self.robot.reset_q, dtype=float)
+        self.last_raw = reference.copy()
         self.last_target = self.last_raw.copy()
         if self.config.leader_passive:
             self.last_raw = (raw[:self.n] - self.offsets) * self.config.joint_signs

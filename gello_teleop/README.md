@@ -6,6 +6,51 @@ GitHub: https://github.com/xArm-Developer/ufactory_teleop
 
 This document is based on `gello_teleop/uf_robot_gello_teleop.py`. It explains how to use a Gello/Dynamixel leader arm with a UFACTORY xArm robot.
 
+For `dual_gello_collect`, enable saving startup references within teleoperation:
+
+```bash
+python -m gello_teleop.dual_gello_collect \
+  -c gello_teleop/config/xarm7_gello_dual_dataset.yaml --reset-q
+```
+
+After normal startup and takeover, teleoperate to the desired pose and press
+`s` in the same terminal. The latest actual q of all four arms is captured at
+the keypress; a background writer atomically replaces both xArm reset poses
+and GELLO reference angles/offsets. Teleoperation, damping, cameras, and recording
+continue without freezing or a stationary sampling wait. Press `s` again to
+replace the saved pose. Verified directions and gripper endpoints are preserved.
+The current session retains its original mapping; the next launch uses the new
+reference. Invalid or stale feedback prevents saving. The separate
+`capture_reference_pose.py --dry-run` remains available for stationary inspection.
+See [the Chinese workflow guide](RECALIBRATION_AND_PIPELINE_ZH.md) for details.
+
+In `dual_gello_collect`, both `q` and Ctrl+C stop following, return the two
+xArms to the session's `reset_q`, and leave controller position mode (mode 0)
+enabled before disconnecting. Exit uses the same `alignment.reset_*` speed,
+acceleration, timeout, tolerance, and sample count as startup. Reset failures
+attempt to hold the current pose without clearing faults or disabling motors.
+A second Ctrl+C cancels the exit reset and attempts a local hold. Fault exits
+hold in place; incomplete connections and `--check-config` do not trigger motion.
+
+To view all fourteen follower joint currents in a separate window while
+teleoperating, run:
+
+```bash
+python -m xarm_stack.plot_dual_joint_current \
+  -c gello_teleop/config/xarm7_gello_dual_dataset.yaml
+```
+
+The seven rows show J1..J7, with the left arm in the left column and the right
+arm in the right column. Currents are in amperes. The script only receives
+TCP 30002 rich reports and uses their dedicated current field, so it leaves
+the collection process's effort selector and motion settings intact. Missing
+feedback creates gaps. This report normally runs at 5 Hz. `--window-s 30`
+sets the displayed history; `--ylim 1.5` fixes every y-axis to ±1.5 A.
+Close with q/Esc, the window close button, or terminal Ctrl+C. Install
+`matplotlib>=3.7` if needed. `--demo` previews synthetic currents without
+hardware; add `--headless --duration 5 --save-plot /tmp/dual_currents.png`
+to save a preview without a desktop.
+
 ## 1. Introduction
 
 The entry script reads Gello joint positions through the Dynamixel serial bus, converts them into robot joint targets with `GelloAgent`, and sends all robot commands through the unified `UFRobot.send_action()` interface.

@@ -3,12 +3,12 @@
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import numpy as np
 import yaml
 
-from gello_teleop.calibrate_joint_directions import _move_arm, calibration_values, save_result
+from gello_teleop.calibrate_joint_directions import _move_arm, calibration_values, save_result, prepare_manual_reference
 from gello_teleop.uf_robot_gello_teleop import (
     JointMapper, Session, apply_saved_calibration, calibration_file_for, load_configs,
     save_current_alignment,
@@ -19,6 +19,32 @@ SOURCE = Path(__file__).resolve().parents[1] / 'tests/fixtures/gello_dual.yaml'
 
 
 class SavedCalibrationTest(unittest.TestCase):
+    def test_manual_reference_uses_current_pose_without_old_reset_motion(self):
+        configs = load_configs(SOURCE, dual=True)
+        session = Session(configs)
+        actual = [np.asarray(robot.reset_q)+.01 for _, robot, _ in configs]
+        session.arms = [Mock(health=Mock(return_value=0), joints=Mock(return_value=q)) for q in actual]
+        with patch('gello_teleop.calibrate_joint_directions.time.sleep'):
+            prepare_manual_reference(session)
+        for (_, robot, leader), arm, q in zip(configs, session.arms, actual):
+            np.testing.assert_allclose(robot.reset_q, q)
+            self.assertIsNone(leader.joint_offsets)
+            self.assertIsNone(leader.leader_reference_q)
+            arm.prepare_reset.assert_called_once()
+            arm.reset.assert_not_called()
+            arm._command.assert_not_called()
+
+    def test_manual_reference_checks_both_arms_before_enabling_either(self):
+        session = Session(load_configs(SOURCE, dual=True))
+        q = np.zeros(7)
+        session.arms = [Mock(health=Mock(return_value=0), joints=Mock(return_value=q)),
+                        Mock(health=Mock(return_value=1))]
+        with patch('gello_teleop.calibrate_joint_directions.time.sleep'):
+            with self.assertRaisesRegex(ValueError, '正在运动'):
+                prepare_manual_reference(session)
+        for arm in session.arms:
+            arm.prepare_reset.assert_not_called()
+
     def test_start_follow_reports_drift_and_keeps_torque_until_cleanup(self):
         configs = load_configs(SOURCE, dual=True)
         session = Session(configs)

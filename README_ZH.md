@@ -152,7 +152,7 @@ python uf_robot_gello_teleop.py --config config/xarm7_gello_teleop.yaml
 
 ## 参考资料
 
-## Nero 功能迁移
+## 功能迁移
 
 统一数采、动力学、H5、xArm 适配层和独立 π0-WM 运行时见
 [MIGRATION_CHECKLIST.md](MIGRATION_CHECKLIST.md)。无硬件 mock 验证：
@@ -181,11 +181,17 @@ xArm SDK 默认只读；只有 endpoint 显式设置 `execution_enabled: true` �
 - 增加 GELLO 型号探测、电流阻尼、速度滤波、输出限幅、弱保持和 watchdog。
 - HDF5 增加双臂关节、命令时间、序号、数据年龄、dq/ddq、有效性、反馈来源、相机时间轴和统计信息。
 运行：
+、、、
 python -m gello_teleop.dual_gello_collect \
   -c gello_teleop/config/xarm7_gello_dual_dataset.yaml
-流程为连接检查 → xArm 复位 → GELLO 人工对齐 → 对齐确认 → 接管；接管后按 r 采集，空格停止并选择保存/丢弃，t 重新检查后接管，q 退出。
+  、、、
+流程为连接检查 → xArm 复位 → GELLO 插值对齐 → 自动采样核对 → 接管；接管后按 r 采集，空格停止并保存，t 重新对齐后接管。
+按 q 或 Ctrl+C 时，先停止遥操，再按 `alignment.reset_*` 配置返回本次启动的 `reset_q`，
+确认到位后保留 xArm 的位置保持和电机使能，再关闭连接退出。复位失败会报错并尝试原地保持。
 电流测试：
+、、、
 python -m xarm_stack.test_joint_current \
   -c xarm_stack/config/xarm_joint_current_test.yaml \
   --arm both --duration 30 --output current_test.h5
+  、、、
 默认不运动；需要当前位置保持时增加 --hold，并将对应 execution_enabled 改为 true。运行中 b/p/l 标记 baseline、press、release。

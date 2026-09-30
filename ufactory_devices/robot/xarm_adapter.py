@@ -67,6 +67,7 @@ class XArmAdapter:
             raise ValueError("xArm dof must be one of 5, 6, or 7")
         if self.config.rest_q and len(self.config.rest_q) != self.dof:
             raise ValueError(f"rest_q has {len(self.config.rest_q)} values but dof={self.dof}")
+        self._configured_gripper_speed()
 
     @property
     def feedback_available(self) -> bool:
@@ -180,11 +181,27 @@ class XArmAdapter:
         self._require_execution("enable")
         self._raise_if_faulted()
         self._check_result(self._call("motion_enable", True, required=True), "motion_enable")
+        self._enabled = True
         if str(self.config.config_kwargs.get("feedback_signal", "none")).lower() in {"torque", "current"}:
             self.configure_feedback_report()
         self._check_result(self._call("set_mode", self._servo_mode(), required=True), "set_mode")
         self._check_result(self._call("set_state", 0, required=True), "set_state")
-        self._enabled = True
+        self._wait_reported_mode(self._servo_mode())
+
+    def _wait_reported_mode(self, mode: int) -> None:
+        """Wait for SDK mode cache before issuing mode-dependent motion."""
+        arm = self._require_arm()
+        if not hasattr(arm, 'mode'):
+            return  # small offline SDK mocks do not publish mode reports
+        timeout = float(self.config.config_kwargs.get('mode_switch_timeout_s', 1.))
+        if not np.isfinite(timeout) or timeout <= 0:
+            raise ValueError('mode_switch_timeout_s must be positive and finite')
+        deadline = time.monotonic()+timeout
+        while int(arm.mode) != mode:
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f'xArm {self.name} mode switch not reported: target={mode}, cached={arm.mode}')
+            self._raise_if_faulted()
+            time.sleep(.01)
 
     def disable(self) -> None:
         self._require_arm()
@@ -206,6 +223,7 @@ class XArmAdapter:
         self._raise_if_faulted()
         self._check_result(self._call("set_mode", self._servo_mode(), required=True), "set_mode")
         self._check_result(self._call("set_state", 0, required=True), "set_state")
+        self._wait_reported_mode(self._servo_mode())
 
     def read_control_role(self, refresh: bool = False) -> str | None:
         del refresh
@@ -304,6 +322,13 @@ class XArmAdapter:
         if not self._enabled:
             raise RuntimeError(f"xArm {self.name} must be enabled before reset motion")
         q = self._validate_vector(q, "q")
+        self._raise_if_faulted()
+        # set_servo_angle is a planned move (mode 0), unlike the mode 1
+        # set_servo_angle_j stream used after takeover. Stay in mode 0 while
+        # the user aligns the leaders; takeover explicitly restores servo mode.
+        self._check_result(self._call('set_mode', 0, required=True), 'reset set_mode(0)')
+        self._check_result(self._call('set_state', 0, required=True), 'reset set_state(0)')
+        self._wait_reported_mode(0)
         result = self._call(
             "set_servo_angle",
             angle=q.tolist(), speed=float(speed), mvacc=float(acceleration),
@@ -312,6 +337,34 @@ class XArmAdapter:
         self._check_result(result, "move_to_reset")
         self._last_commanded_q = q.copy()
         self._last_command_timestamp_us = now_us()
+
+    def control_status(self) -> dict:
+        """Read controller state/error for reset progress; never clears faults."""
+        arm = self._require_arm()
+        result = self._call('get_state', required=False)
+        self._check_result(result, 'get_state')
+        state = result[1] if isinstance(result, tuple) and len(result) > 1 else getattr(arm, 'state', None)
+        faults = self._call('get_err_warn_code', required=False)
+        self._check_result(faults, 'get_err_warn_code')
+        errors = faults[1] if isinstance(faults, tuple) and len(faults) > 1 else [0, 0]
+        return {'mode': getattr(arm, 'mode', None), 'state': state,
+                'error_code': int(_first_numeric(errors, 0.))}
+
+    def hold_position(self, *, speed: float = 0.2, acceleration: float = 0.5) -> np.ndarray:
+        """Cancel pending motion, then hold actual q in controller position mode.
+
+        Motor enable is retained. A fault is never cleared or overridden; if
+        reading q or restarting position mode fails, the stop request remains.
+        """
+        arm = self._require_arm()
+        self._require_execution('hold_position')
+        if not self._enabled:
+            raise RuntimeError(f'xArm {self.name} must be enabled before position hold')
+        self._check_result(self._call('set_state', 4, required=True), 'hold set_state(4)')
+        self._raise_if_faulted()
+        q = self._validate_vector(self._read_q(arm)[0], 'hold q')
+        self.move_to_reset(q, speed=speed, acceleration=acceleration)
+        return q.copy()
 
     def wait_motion_done(self, timeout_s: float, poll_interval_s: float = 0.1) -> bool:
         self._require_arm()
@@ -330,9 +383,13 @@ class XArmAdapter:
     def init_gripper(self, effector: str = "xArmGripper") -> None:
         del effector
         self._require_execution("init_gripper")
+        speed = self._configured_gripper_speed()
         self._gripper = self._require_arm()
         self._check_result(self._call("set_gripper_enable", True, required=True), "set_gripper_enable")
         self._check_result(self._call("set_gripper_mode", 0, required=False), "set_gripper_mode")
+        if speed is not None:
+            self._check_result(self._call("set_gripper_speed", speed, required=True), "set_gripper_speed")
+            log.info("xArm %s G1 gripper speed set to %d r/min", self.name, speed)
 
     def reset_gripper(self) -> bool:
         if self._gripper is None:
@@ -344,7 +401,9 @@ class XArmAdapter:
     def read_gripper_state(self) -> GripperState:
         if self._gripper is None:
             return GripperState(np.nan, np.nan, now_us(), "unavailable")
-        raw = _first_numeric(self._call("get_gripper_position", required=False), np.nan)
+        result = self._call("get_gripper_position", required=False)
+        self._check_result(result, "get_gripper_position")
+        raw = _first_numeric(result, np.nan)
         return GripperState(float(self._raw_to_width(raw)), np.nan, now_us(), "width")
 
     def read_leader_gripper_state(self) -> GripperState:
@@ -444,6 +503,21 @@ class XArmAdapter:
         if signal != "none":
             return signal
         return velocity if velocity == "position_difference" else "unavailable"
+
+    def _configured_gripper_speed(self) -> int | None:
+        """G1 SDK motor speed in r/min; absent/null/-1 retains controller settings."""
+        value = self.config.config_kwargs.get("gripper_speed")
+        if value is None:
+            return None
+        try:
+            speed = float(value)
+        except (TypeError, ValueError):
+            raise ValueError("gripper_speed must be a positive integer in r/min, or -1") from None
+        if speed == -1:
+            return None
+        if isinstance(value, bool) or not np.isfinite(speed) or speed <= 0 or speed != int(speed):
+            raise ValueError("gripper_speed must be a positive integer in r/min, or -1")
+        return int(speed)
 
     def _width_to_raw(self, width_m: float) -> float:
         kwargs = self.config.config_kwargs

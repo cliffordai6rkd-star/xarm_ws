@@ -78,6 +78,7 @@ class CameraVisualizer:
         self.camera_names = frozenset(camera_names)
         self._queue = None
         self._process = None
+        self._stop_event = None
         self._dispatch_queue: queue.Queue = queue.Queue(
             maxsize=max(2, 2 * len(self.camera_names))
         )
@@ -105,15 +106,20 @@ class CameraVisualizer:
             # in-process handoff, so frame copies and multiprocessing serialization
             # happen outside the control/data-collection loop.
             process_queue = context.Queue(maxsize=max(2, 2 * len(self.camera_names)))
+            # A stopped renderer must not leave the parent waiting for a
+            # partially written image in this deliberately lossy queue.
+            process_queue.cancel_join_thread()
+            stop_event = context.Event()
             process = context.Process(
                 target=_camera_visualizer_worker,
-                args=(tuple(sorted(self.camera_names)), process_queue),
+                args=(tuple(sorted(self.camera_names)), process_queue, stop_event),
                 name="camera-visualizer",
                 daemon=True,
             )
             process.start()
             self._queue = process_queue
             self._process = process
+            self._stop_event = stop_event
             self._dispatch_thread = threading.Thread(
                 target=self._dispatch_loop,
                 name="camera-visualizer-dispatch",
@@ -130,6 +136,7 @@ class CameraVisualizer:
                 process_queue.close()
             self._queue = None
             self._process = None
+            self._stop_event = None
             self._dispatch_thread = None
             self._log_failure("failed to start camera visualization process")
             return
@@ -142,12 +149,12 @@ class CameraVisualizer:
     def stop(self) -> None:
         process = self._process
         frame_queue = self._queue
+        if self._stop_event is not None:
+            self._stop_event.set()
         _put_latest_camera_preview(self._dispatch_queue, None)
         dispatch_thread = self._dispatch_thread
         if dispatch_thread is not None:
             dispatch_thread.join(timeout=1.0)
-        if frame_queue is not None:
-            _put_latest_camera_preview(frame_queue, None)
         if process is not None:
             process.join(timeout=2.0)
             if process.is_alive():
@@ -161,6 +168,7 @@ class CameraVisualizer:
             frame_queue.close()
         self._queue = None
         self._process = None
+        self._stop_event = None
         self._dispatch_thread = None
         while True:
             try:
@@ -217,20 +225,20 @@ class CameraVisualizer:
 def _camera_visualizer_worker(
     camera_names: tuple[str, ...],
     frame_queue,
+    stop_event=None,
 ) -> None:
     """Own all GUI calls in a child process and render one labeled camera grid."""
     # OpenCV's Qt build can select Wayland even when only its xcb plugin is
     # installed.  Keep that GUI-only environment choice inside the child.
     os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
-    cv2 = None
-    window_name = "Nero cameras"
-    window_open = False
+    window = None
     latest_frames: dict[str, np.ndarray] = {}
     stop = False
     try:
         cv2 = _import_cv2()
+        window = _create_camera_preview_window(cv2)
         selected = frozenset(camera_names)
-        while not stop:
+        while not stop and (stop_event is None or not stop_event.is_set()):
             try:
                 item = frame_queue.get(timeout=0.05)
                 items = [item]
@@ -261,34 +269,104 @@ def _camera_visualizer_worker(
                     latest_frames,
                     cv2,
                 )
-                if not window_open:
-                    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-                    height, width = preview.shape[:2]
-                    scale = max(1.0, 512.0 / width, 384.0 / height)
-                    cv2.resizeWindow(
-                        window_name,
-                        int(round(width * scale)),
-                        int(round(height * scale)),
-                    )
-                    window_open = True
-                cv2.imshow(window_name, preview)
-            cv2.waitKey(1)
+                window.show(preview)
+            if not window.poll():
+                break
     except Exception:
         log.exception(
             "camera visualization process failed; acquisition and control continue"
         )
     finally:
-        if window_open and cv2 is not None:
+        if window is not None:
             try:
-                cv2.destroyWindow(window_name)
+                window.close()
             except Exception:
-                log.debug("failed to destroy camera window %s", window_name)
-        if cv2 is not None:
-            try:
-                cv2.destroyAllWindows()
-                cv2.waitKey(1)
-            except Exception:
-                pass
+                log.debug("failed to destroy camera preview window", exc_info=True)
+
+
+def _create_camera_preview_window(cv2):
+    gui = next((line.split(":", 1)[1].strip()
+                for line in cv2.getBuildInformation().splitlines()
+                if line.strip().startswith("GUI:")), "")
+    if gui.upper() in {"NONE", "NO"}:
+        log.info("OpenCV has no GUI backend; camera preview uses Tk")
+        return _TkCameraPreviewWindow(cv2)
+    return _OpenCVCameraPreviewWindow(cv2)
+
+
+class _OpenCVCameraPreviewWindow:
+    def __init__(self, cv2):
+        self.cv2 = cv2
+        self.name = "Nero cameras"
+        self.opened = False
+
+    def show(self, preview):
+        if not self.opened:
+            self.cv2.namedWindow(self.name, self.cv2.WINDOW_NORMAL)
+            height, width = preview.shape[:2]
+            scale = max(1.0, 512.0 / width, 384.0 / height)
+            self.cv2.resizeWindow(self.name, int(round(width * scale)),
+                                  int(round(height * scale)))
+            self.opened = True
+        self.cv2.imshow(self.name, preview)
+
+    def poll(self):
+        if not self.opened:
+            return True
+        self.cv2.waitKey(1)
+        return self.cv2.getWindowProperty(self.name, self.cv2.WND_PROP_VISIBLE) >= 1
+
+    def close(self):
+        if self.opened:
+            self.cv2.destroyWindow(self.name)
+            self.cv2.waitKey(1)
+
+
+class _TkCameraPreviewWindow:
+    """Display RGB PPM frames without requiring Pillow or a GUI OpenCV build."""
+    def __init__(self, cv2):
+        self.tk = importlib.import_module("tkinter")
+        self.cv2 = cv2
+        self.root = self.tk.Tk()
+        self.root.title("Nero cameras")
+        self.root.withdraw()
+        self.root.minsize(320, 120)
+        self.label = self.tk.Label(self.root, background="black", borderwidth=0)
+        self.label.pack(fill="both", expand=True)
+        self.opened = False
+        self.closed = False
+        self.photo = None
+        self.root.protocol("WM_DELETE_WINDOW", self._request_close)
+
+    def _request_close(self):
+        self.closed = True
+
+    def show(self, preview):
+        if self.closed:
+            return
+        height, width = preview.shape[:2]
+        if not self.opened:
+            scale = min(1., .85 * self.root.winfo_screenwidth() / width,
+                        .85 * self.root.winfo_screenheight() / height)
+            self.root.geometry(f"{int(width * scale)}x{int(height * scale)}")
+            self.root.deiconify()
+            self.root.update_idletasks()
+            self.opened = True
+        scale = min(self.root.winfo_width() / width, self.root.winfo_height() / height)
+        size = (max(1, int(width * scale)), max(1, int(height * scale)))
+        if size != (width, height):
+            preview = self.cv2.resize(preview, size, interpolation=self.cv2.INTER_AREA)
+        rgb = self.cv2.cvtColor(preview, self.cv2.COLOR_BGR2RGB)
+        data = f"P6\n{size[0]} {size[1]}\n255\n".encode("ascii") + rgb.tobytes()
+        self.photo = self.tk.PhotoImage(master=self.root, data=data, format="PPM")
+        self.label.configure(image=self.photo)
+
+    def poll(self):
+        self.root.update()
+        return not self.closed
+
+    def close(self):
+        self.root.destroy()
 
 
 def _compose_camera_preview(

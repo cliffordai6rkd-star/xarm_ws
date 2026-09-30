@@ -194,39 +194,39 @@ python gello_teleop/uf_robot_gello_teleop_dual.py \
   --config gello_teleop/config/xarm7_gello_teleop_dual.yaml
 ```
 
-只有关节顺序或方向尚未确定时，才需要逐轴标定：
+重新标定并用于双臂数采时，分别运行：
 
 ```bash
-python gello_teleop/calibrate_joint_directions.py \
-  --config gello_teleop/config/xarm7_gello_teleop_dual.yaml \
-  --output gello_teleop/config/xarm7_gello_teleop_dual_calibrated.yaml
+python gello_teleop/calibrate_joint_directions.py --left
+python gello_teleop/calibrate_joint_directions.py --right
 ```
 
-脚本会让两台 xArm 回到各自 `RobotConfig.reset_q`，记录 GELLO 参考位置，
-逐轴让 xArm 与 GELLO 正向试动；先观察是否为同一物理关节，再输入 `y`（同向）
-或 `n`（反向）。若不是同一关节，输入 `x` 并调整 `joint_ids` 顺序后重试。
-脚本把 `joint_signs`、`joint_offsets`、`leader_reference_q` 保存到新的配置文件，
-原始文件不会被覆盖。
+每次只连接所选侧。先用控制界面摆好 xArm 参考姿态，再手动把 GELLO 摆成
+对应原点并打开主手夹爪。记录原点后，在终端输入 `1`～`7` 选择轴；xArm
+该轴正向运动 15°，操作者让 GELLO 同轴按同一物理方向转动约 15°，静止后
+按 Enter。程序根据原始角度增减推断方向，并同步重算偏置、覆盖保存。
+GELLO 记录原点后复用采集配置中的纯电流阻尼；`--no-damping` 可关闭。
+每轴试动后 xArm 返回起点，GELLO 由人返回原点。
+可任意顺序、重复选择轴；输入 `q` 退出。重跑某侧先在内存中记录新原点，首个轴成功后才覆盖该侧结果并保存本次
+方向确认进度；尚无成功轴时旧文件保持不变，另一侧已保存结果保留。
 
-也可以直接使用保存的配置启动双臂遥操：
+唯一结果文件为 `config/xarm7_gello_calibration.yaml`。原点或任一方向未确认时，
+数采入口会拒绝连接硬件。两侧均完成后，直接运行：
 
 ```bash
-python gello_teleop/uf_robot_gello_teleop_dual.py \
-  --config gello_teleop/config/xarm7_gello_teleop_dual_calibrated.yaml
+python -m gello_teleop.dual_gello_collect \
+  -c gello_teleop/config/xarm7_gello_dual_dataset.yaml
 ```
 
-启动时两台 xArm 会先复位到 `reset_q`，两个 GELLO 会自动回到保存的
-`leader_reference_q` 并保持力矩；开始遥操前请托住主手。按 Enter 后程序释放
-主手映射关节和夹爪的力矩，再进入双臂遥操；只有 `torque_joint_ids` 指定的
-非映射固定关节继续保持。`hold_pwm_by_joint` 仅用于复位/对齐保持阶段。
-以后每次开机继续传原始配置，程序会自动加载同目录的 `_calibrated.yaml`，
-无需再运行标定脚本。传入保存的文件本身也可用，但那样其它参数应直接修改
-保存的文件。可不连接硬件查看当前保存的映射：
+该配置直接读取上述结果，不会重新估计零点；启用双臂、两台 D405 和 G1 夹爪。
+只读查看保存的映射：
 
 ```bash
-python gello_teleop/calibrate_joint_directions.py \
-  --config gello_teleop/config/xarm7_gello_teleop_dual_calibrated.yaml --show-mapping
+python gello_teleop/calibrate_joint_directions.py --show-mapping
 ```
+
+详细流程见 [RECALIBRATION_AND_PIPELINE_ZH.md](RECALIBRATION_AND_PIPELINE_ZH.md)。
+旧 `_calibrated`、`zero_auto*` 和已测范围结果已清理；历史零点/保持工具为独立入口。
 
 ### Gello 保持力不足时
 
@@ -271,7 +271,7 @@ python gello_teleop/uf_robot_gello_teleop_dual.py \
 
 ```bash
 python gello_teleop/tune_gello_j4_pwm.py \
-  --config gello_teleop/config/xarm7_gello_teleop_dual_calibrated.yaml \
+  --config gello_teleop/config/xarm7_gello_calibration.yaml \
   --side left \
   --output gello_teleop/config/xarm7_gello_teleop_dual_left_j4_tuned.yaml \
   --step 25
@@ -426,6 +426,9 @@ I_mA 为 XL330 实际电流，PWM 为实际输出。电流/PWM 都不是实测 N
 
 ## 双臂遥操数采入口
 
+人工新参考姿态、方向重标定，以及双臂＋G1 夹爪＋RealSense RGB/深度全链路
+验收流程见 [RECALIBRATION_AND_PIPELINE_ZH.md](RECALIBRATION_AND_PIPELINE_ZH.md)。
+
 新的入口是 `dual_gello_collect.py`，配置示例为
 `config/xarm7_gello_dual_dataset.yaml`：
 
@@ -437,8 +440,111 @@ python -m gello_teleop.dual_gello_collect \
 该配置引用已经保存 `joint_signs`、`joint_offsets` 和
 `leader_reference_q` 的 calibrated GELLO 文件。没有保存标定时入口会在连接前拒绝，
 不会用当前摆放姿态重新计算 offset。实际顺序固定为：连接检查、两台 xArm 低速到
-`reset_q`、人工摆放 GELLO、显示左右各关节误差并确认、接管遥操。接管后 `r` 开始
-新的 episode，空格停止并保持，`t` 在停止后重新做当前位置检查再接管，`q` 退出。
+`reset_q`、GELLO 电流位置插值对齐、恢复阻尼并自动采样核对、全部通过后接管。
+取消人手微调等待：`alignment_samples` 指定核对次数，任一次误差超过
+`alignment_tolerance_rad` 或采样失败都立即报错停止接管。
+终端 `r` 开始新的 episode，空格停止录制并自动保存；遥操状态保持不变。
+`F/f` 让 xArm 和夹爪保持当前位置，GELLO 阻尼继续运行；`o/O` 让 xArm 按复位速度
+返回 `reset_q`，随后等待 `t/T`。`t` 按启动时的电流位置插值流程将 GELLO 对齐到
+xArm 当前保持姿态，恢复阻尼并执行同样的自动采样核对，通过后接管，无需 Enter 或人手微调。
+`F/t/o` 不启停录制：执行这些操作时，已开始的 episode 持续记录状态与图像，
+操作时间保存在 `teleop_events`；对齐期间 GELLO 数据的有效性单独标记。
+
+`q` 和 Ctrl+C 都先停止遥操，再让两台 xArm 返回本次启动读取的 `reset_q`，
+使用 `alignment.reset_speed_rad_s`、`reset_acc_rad_s2`、`reset_timeout_s`、
+`reset_tolerance_rad` 和 `reset_samples`。实际关节反馈连续到位、控制器停止运动后，
+保留模式 0 的位置保持并断开连接，不调用 `motion_enable(False)`。
+退出复位超时、反馈无效或设备故障会报错，并尝试保持当前位置；不自动清除故障。
+退出复位期间再次按 Ctrl+C 可取消回位，仍尝试保持当前位置后关闭连接。
+异常退出直接尝试原地保持；连接尚未完成或仅 `--check-config` 时不复位。
+
+双臂七轴电流可在另一个终端实时查看：
+
+```bash
+python -m xarm_stack.plot_dual_joint_current \
+  -c gello_teleop/config/xarm7_gello_dual_dataset.yaml
+```
+
+一个窗口内七行两列：左列为左 xArm J1～J7，右列为右 xArm J1～J7，纵轴单位 A。
+脚本从同一配置及其 `gello_config` 读取两侧 IP，仅接收 TCP 30002 详细状态报文，
+使用独立的电流字段，不切换数采使用的力矩/电流报告选择器，不操作使能、模式或复位。
+因此可在遥操与录制期间运行。断连或反馈超过 `--stale-s` 时显示缺口和状态，不用零替代。
+报文频率通常为 5 Hz，增加窗口刷新频率不会增加反馈频率；字段定义见
+[UFACTORY 官方 TCP 报文说明](https://docs.supportarticle.ufactory.cc/support_articles/developer/firmware/data-description-of-tcp-port.html)。
+默认显示最近 30 秒；可加 `--window-s 10 --update-hz 10`，`--ylim 1.5` 固定全部纵轴为 ±1.5 A。
+窗口按 `q`/Esc、关闭窗口或终端 Ctrl+C 退出；退出只关闭接收连接。
+首次使用需要 `python -m pip install "matplotlib>=3.7"`。
+`--demo` 使用模拟电流检查布局；`--demo --headless --duration 5 --save-plot /tmp/dual_currents.png`
+可在无桌面环境保存示例图，`--check-config` 只检查两侧 IP。
+
+`cameras` 中的 `visualize: true` 视角在一个 `Nero cameras` 窗口里横向拼接并标注
+配置的 `name`；预览在独立进程运行，复位、保持和未录制时也持续显示。
+`left wrist` 对应序列号 `419122271564`，`right wrist` 对应 `419122270270`。
+HDF5 中的相机分组也使用这些名称，`serial_number` 仍用于选择设备。
+当前 OpenCV 没有 GUI 支持时，预览自动使用 Tk，无需替换 OpenCV。
+夹爪默认 `gripper.control_mode: absolute_position`：主手按标定的打开/关闭角度计算
+闭合比例，直接映射到 xArm 的绝对开口；保持相同主手开合度不会累计闭合。
+需要对目标开口限速时可改为 `rate_limited_position`，此时使用 `max_speed_m_s`。
+
+夹爪硬件速度在数采配置的 `arms.left.gripper_speed` 和 `arms.right.gripper_speed`
+分别设置；示例为 `5000`，单位是 G1 SDK 的电机 r/min，不是开口 m/s。
+数采初始化夹爪时调用 `set_gripper_speed`，失败会直接报错；省略、`null` 或 `-1`
+保留控制器原速度。修改后重启数采生效。`gripper.sample_rate_hz` 控制夹爪目标/反馈
+循环频率（当前 20 Hz，上限 30 Hz），不能替代硬件速度设置。
+绝对映射模式下修改 `max_speed_m_s` 不影响跟随速度；关节的 `kp/kd` 也不控制夹爪。
+速度接口及单位见 [官方 SDK 文档](https://github.com/xArm-Developer/xArm-Python-SDK/blob/master/doc/api/xarm_api.md#set_gripper_speed)，
+5000 的示例见 [G1 控制示例](https://github.com/xArm-Developer/xArm-Python-SDK/blob/master/example/wrapper/common/5004-set_gripper.py)。
+
+若按压某侧主手夹爪没有反应，先检查实际开合角。保持新版数采运行，在另一终端执行：
+
+```bash
+python gello_teleop/inspect_gello_grippers.py -c gello_teleop/config/xarm7_gello_dual_dataset.yaml --left --watch
+```
+
+该工具复用数采缓存，不额外打开串口，不写标定或机器人；显示 ID8 原始角度、
+闭合百分比、映射开口、最近成功下发的开口及实际反馈。`--right` 检查右侧，
+省略左右参数显示两侧，`--json` 查看完整数据。修改代码前已启动的数采进程须先重启。
+可在数采按 `F` 保持从臂与夹爪，再手动松开/按压 GELLO，读取两个端点；
+此时显示“保持/未下发”，映射值会变化，实际夹爪保持不动。
+
+初始七轴标定只记录主手夹爪打开角，关闭角曾按 `gripper_travel_deg: -42` 推算，
+不保证适用于实际机构。松开和按到底的两个读数分别填写统一标定文件
+`xarm7_gello_calibration.yaml` 对应侧的 `TeleoperatorConfig.gripper_open_deg` 和
+`gripper_close_deg`；两个显式端点优先于 `gripper_travel_deg`。正负方向都支持，
+应使用实测角度；不要因“左侧”而直接猜测符号。松开应为 0% 闭合，按到底应为 100%。
+若原始角度变化而闭合百分比始终为 0，端点/方向不匹配；若原始角度完全不变，
+检查主手 ID8 及机构；若目标与下发开口变化而实际反馈不变化，检查 xArm 夹爪执行端。
+保存端点后重启数采；已有七轴原点/方向无需重标。
+
+### 将当前遥操位姿保存为下一次启动参考
+
+直接使用数采遥操入口的参考位姿模式：
+
+```bash
+python -m gello_teleop.dual_gello_collect \
+  -c gello_teleop/config/xarm7_gello_dual_dataset.yaml --reset-q
+```
+
+程序先执行原来的完整遥操 pipeline。遥操到希望的初始位姿后，在同一个终端
+按 `s/S`，立即读取左/右 xArm 与 GELLO 四条臂最新的七轴实际反馈，后台覆盖
+保存 `gello_config` 指向的统一标定文件。无需按 `F`、Enter，不等待连续静止
+采样，也不需要退出遥操或启动另一个脚本。保存后打印四组 `q_rad` 和文件路径，
+可以继续遥操，或到另一个位置再次按 `s` 覆盖；上一份仍在写入时会提示等待其完成。
+
+两侧 `RobotConfig.reset_q`、`TeleoperatorConfig.start_joints`、`leader_reference_q`
+和 `joint_offsets` 一次性原子覆盖。偏移按 `raw - xarm_q / joint_signs` 重算，
+保留原有方向核对结果、关节方向和夹爪端点。主从反馈由独立线程采集，保存的是
+按键时缓存内最新的实际角度及各自时间戳；单次快照不等于四设备硬件同步采样。
+反馈无效/过期、复位对齐中、设备方向不符或文件被其它进程写入时，报错且不覆盖。
+
+`s` 不停止遥操，不改变阻尼、夹爪、相机预览或录制状态；后台写文件时仍处理
+其它按键、相机和采样队列。录制中保存参考的时刻记入 `teleop_events`。
+当前进程继续使用原来的映射与复位目标，避免运行中改变关节目标；下一次启动
+数采时，两台 xArm 返回新 `reset_q`，GELLO 插值到新记录的位置并自动对齐接管。
+没有 `--reset-q` 时 `s` 不写文件，会提示添加该参数。
+
+独立的 `capture_reference_pose.py` 保留为额外检查工具；`--dry-run` 只打印。
+它要求遥操进程仍在运行，并做多次静止采样；日常在线保存使用上述 `--reset-q` 与 `s`。
 
 xArm 控制线程使用 monotonic 100 Hz tick；GELLO 按各自 `fps` 在独立线程读取，控制
 线程只使用最近有效目标的 ZOH。`position_mode: direct` 是带步长和跟踪误差上限的
@@ -456,14 +562,26 @@ xArm 控制线程使用 monotonic 100 Hz tick；GELLO 按各自 `fps` 在独立�
 
 ### GELLO 阻尼
 
-`GelloTeleopConfig` 提供可选的 `damping_enabled: true`、`damping_mode: current`、
-`damping_gain`、`damping_brake_gain`、`damping_current_limit`、
-`weak_hold_enabled` 和 `damping_watchdog_ms`。启动时先通过 Dynamixel ping 检查实际
-型号，只允许已知控制表进入电流模式；增益和上限是舵机原始电流单位，未做 Nm 校准。
-`damping_velocity_filter_alpha` 对由实际 host dt 计算的 GELLO 速度做因果一阶滤波。
-纯阻尼在零速度时不抗重力，弱保持参考会在低速稳定后缓慢更新，避免一直拉回启动姿态。
-未知型号会拒绝启用阻尼。默认配置关闭该选项，建议先在单电机、低上限和硬件急停可用的
-条件下确认型号、方向、watchdog 和手感。
+采集配置 `xarm7_gello_dual_dataset.yaml` 的 `gello_damping` 集中设置主手阻尼，
+其参数覆盖 `gello_config` 内同名手感设置，省略整个配置块时沿用标定文件。
+`enabled: false` 关闭阻尼；`sides.left` / `sides.right` 可分别覆盖公共设置。
+重新标定不会改动采集配置。标定时记录原点前主手被动，记录后启用纯阻尼；
+采集时在接管阶段启用阻尼。标定阶段强制关闭弱保持，使用编码器坐标，
+不依赖尚未确认的关节方向。两侧标定命令保持不变，加 `--no-damping` 可临时关闭。
+
+当前配置启用纯电流阻尼，七轴低强度初始增益 8、附加制动增益 8、电流上限 15，
+速度阈值 0.5 rad/s。所有电流参数均为舵机原始单位，不是 Nm；尚未实机调参。
+主手读写设为 30 Hz，从臂控制仍为 100 Hz。电流指令按标定符号转换回编码器方向，
+使阻力反向于主手运动。加大 `damping_gain` 增加常规阻力，
+`damping_brake_gain` 增加超过阈值后的阻力；阻尼不是硬限速。
+`damping_current_limit` 控制每轴电流上限，不能据此推断输出力矩。
+
+`weak_hold_enabled` 默认关闭：纯阻尼在零速度时不抗重力，不能保证松手不塌。
+弱保持需要另外配置正的 `weak_hold_gain` 并调试，不能替代重力补偿。
+接管时检查电机型号，只允许已知控制表启用电流模式，目标电流先清零再使能。
+主手读写失败时结束跟随并尝试立即释放阻尼；暂停/退出也关闭主手力矩。
+总线 watchdog 为 500 ms，用于通信中断；首轮请支撑主手确认各轴阻力方向。
+控制表参考：[ROBOTIS XL330-M077 手册](https://emanual.robotis.com/docs/en/dxl/x/xl330-m077/)。
 
 ## 独立 xArm 关节电流测试
 
@@ -482,3 +600,17 @@ python -m xarm_stack.test_joint_current \
 退出时按 `restore_feedback_signal` 恢复报告选择。电流不可用时保存 NaN 和有效性标志，
 不会用零值冒充测量，也不会把同一字段同时标成 torque。输出包含 q、dq、current、
 torque、时间戳、阶段和错误状态，并打印相对 baseline 的有符号变化和噪声。
+
+### 双臂采集启动对齐
+
+使用 `xarm7_gello_dual_dataset.yaml` 时，设备检查通过后 xArm 自动低速返回
+保存的 `reset_q`。随后 GELLO 使用 mode 5，持续设置 `Goal Current=80` 做位置保持，
+目标位置按配置次数插值从当前姿态到标定位置。`alignment.gello_hold_current_raw`
+控制 Goal Current，`gello_reset_steps` 控制插值次数，`gello_reset_interval_s`
+控制每步等待时间（默认 0.2 秒）。80 是原始电流值，不是百分比或固定实测力矩；
+位置环按误差决定实际电流。插值结束后立即解除位置保持并恢复主手阻尼，自动采样核对误差。
+每次采样都必须满足误差阈值；读取失败或任一次超限立即报错，不等待人手微调。
+全部采样通过后接管 xArm，此时不再重新切换主手电机模式。
+终端底行实时显示左/右 J1..J7 相对标定原点的误差（度），各轴须满足
+`alignment.alignment_tolerance_rad`，自动核对 `alignment_samples` 次，任一次失败即报错；
+全部通过后接管，`q` 退出。`t` 重新执行 GELLO 对齐到 xArm 当前保持姿态的流程。

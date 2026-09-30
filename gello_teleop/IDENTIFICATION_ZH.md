@@ -1,5 +1,10 @@
 # xArm7 GELLO 主手 URDF 与动力学辨识
 
+> 2026-09-29：旧方向/零点/局部范围结果已清理。当前主从遥操标定采用
+> [单侧选轴标定流程](RECALIBRATION_AND_PIPELINE_ZH.md)，统一结果为
+> `config/xarm7_gello_calibration.yaml`。下文机械几何/动力学流程若需已测范围，
+> 必须重新采集，不能将历史说明中的已测文件视为仍然存在。
+
 本流程建模的是 GELLO 主手。`models/xarm7_dynamics.urdf` 是从臂模型。
 目前已经提供 STL 预览、几何测量模板、激励轨迹规划、主手采集及离线辨识。
 现在无需 CAD 即可查看从 STL 安装孔重建的七轴装配草稿；实物装配角、编码器零位

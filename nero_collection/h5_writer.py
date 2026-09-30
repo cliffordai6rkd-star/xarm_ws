@@ -58,6 +58,9 @@ FOLLOWER_TELEOP_DATASETS = frozenset(
         "ddq_valid_follower",
         "gripper_follower_valid",
         "gripper_cmd_valid",
+        "gripper_cmd_timestamp_us",
+        "gripper_follower_timestamp_us",
+        "gripper_leader_fraction",
         "sample_lateness_us",
         "gripper_follower",
         "gripper_cmd",
@@ -365,6 +368,14 @@ class EpisodeBuffer:
                         if name == "q_leader_raw" else
                         "GELLO joint coordinates after configured signs and offsets"
                     )
+                if name in {'gripper_cmd', 'gripper_follower'} and 'gripper_cmd_timestamp_us' in finalized_data:
+                    dataset.attrs['unit'] = 'm'
+                if name == 'gripper_cmd' and 'gripper_cmd_timestamp_us' in finalized_data:
+                    dataset.attrs['definition'] = 'latest successfully issued gripper width target at follower acquisition time'
+                    dataset.attrs['validity_path'] = 'teleop/gripper_cmd_valid'
+                if name == 'gripper_leader_fraction':
+                    dataset.attrs['unit'] = 'dimensionless'
+                    dataset.attrs['definition'] = '0=open, 1=closed, clipped to configured GELLO trigger travel'
                 if name in {"ddq_follower", "ddq_follower_raw"}:
                     dataset.attrs["unit"] = "rad/s^2"
                     dataset.attrs["definition"] = (

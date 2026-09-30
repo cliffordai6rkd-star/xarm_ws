@@ -164,3 +164,168 @@ def test_gripper_service_starts_without_enabling_hardware(monkeypatch):
     service.stop()
     assert not any(call[0] in {"motion_enable", "set_gripper_enable", "set_gripper_mode"}
                    for call in FakeGripperArm.calls)
+
+
+def test_reset_uses_planned_mode_and_fifteen_degree_speed(adapter, monkeypatch):
+    from unittest.mock import Mock
+    adapter.config.config_kwargs['execution_enabled'] = True
+    adapter.enable()
+    move = Mock(return_value=0)
+    monkeypatch.setattr(adapter._arm, 'set_servo_angle', move, raising=False)
+    begin = len(FakeArm.calls)
+    adapter.move_to_reset(np.zeros(6), speed=np.deg2rad(15), acceleration=.3)
+    modes = [call[1][0] for call in FakeArm.calls[begin:] if call[0] == 'set_mode']
+    assert modes == [0]
+    assert move.call_args.kwargs['speed'] == pytest.approx(np.deg2rad(15))
+    assert move.call_args.kwargs['is_radian'] and not move.call_args.kwargs['wait']
+    adapter.set_normal_mode()
+    assert [call[1][0] for call in FakeArm.calls[begin:] if call[0] == 'set_mode'] == [0, 1]
+
+
+def test_exit_hold_cancels_old_target_and_keeps_motor_enable_after_disconnect(adapter, monkeypatch):
+    from unittest.mock import Mock
+    adapter.config.config_kwargs['execution_enabled'] = True
+    adapter.enable()
+    adapter.command_joint_positions(np.ones(6))
+    move = Mock(return_value=0)
+    monkeypatch.setattr(adapter._arm, 'set_servo_angle', move, raising=False)
+    begin = len(FakeArm.calls)
+    held = adapter.hold_position(speed=.3, acceleration=.4)
+    np.testing.assert_array_equal(held, np.zeros(6))
+    np.testing.assert_array_equal(adapter.last_commanded_q, held)
+    assert adapter._enabled
+    assert [(call[0], call[1]) for call in FakeArm.calls[begin:]] == [
+        ('set_state', (4,)), ('set_mode', (0,)), ('set_state', (0,))]
+    assert move.call_args.kwargs == dict(angle=held.tolist(), speed=.3, mvacc=.4,
+                                         is_radian=True, wait=False)
+    adapter.disconnect()
+    assert FakeArm.calls[-1] == ('disconnect',)
+    assert not any(call[0] == 'motion_enable' and call[1] == (False,) for call in FakeArm.calls)
+
+
+def test_exit_hold_retains_stop_and_enable_when_controller_reports_fault(adapter, monkeypatch):
+    from unittest.mock import Mock
+    adapter.config.config_kwargs['execution_enabled'] = True
+    adapter.enable()
+    move = Mock(return_value=0)
+    monkeypatch.setattr(adapter._arm, 'set_servo_angle', move, raising=False)
+    monkeypatch.setattr(adapter._arm, 'get_err_warn_code', lambda: (0, [11, 0]))
+    begin = len(FakeArm.calls)
+    with pytest.raises(RuntimeError, match='error code 11'):
+        adapter.hold_position()
+    assert adapter._enabled
+    assert FakeArm.calls[begin:] == [('set_state', (4,), {})]
+    move.assert_not_called()
+
+
+def test_exit_hold_does_not_restart_motion_after_feedback_failure(adapter, monkeypatch):
+    from unittest.mock import Mock
+    adapter.config.config_kwargs['execution_enabled'] = True
+    adapter.enable()
+    monkeypatch.setattr(adapter._arm, 'get_servo_angle', Mock(side_effect=ConnectionError('lost feedback')))
+    begin = len(FakeArm.calls)
+    with pytest.raises(ConnectionError, match='lost feedback'):
+        adapter.hold_position()
+    assert FakeArm.calls[begin:] == [('set_state', (4,), {})]
+    assert adapter._enabled
+
+
+def test_readonly_connection_cannot_request_exit_hold(adapter):
+    begin = len(FakeArm.calls)
+    with pytest.raises(RuntimeError, match='execution is disabled'):
+        adapter.hold_position()
+    assert FakeArm.calls[begin:] == []
+
+
+def test_control_status_does_not_accept_failed_sdk_reads(adapter, monkeypatch):
+    monkeypatch.setattr(adapter._arm, 'get_state', lambda: (5, 2), raising=False)
+    with pytest.raises(RuntimeError, match='get_state failed with code 5'):
+        adapter.control_status()
+
+
+def test_mode_switch_waits_for_async_sdk_report_before_servo_command(adapter, monkeypatch):
+    pending = [None]
+    adapter._arm.mode = 0
+    def set_mode(mode):
+        pending[0] = mode
+        return 0
+    def deliver_report(_seconds):
+        adapter._arm.mode = pending[0]
+    monkeypatch.setattr(adapter._arm, 'set_mode', set_mode)
+    monkeypatch.setattr('ufactory_devices.robot.xarm_adapter.time.sleep', deliver_report)
+    adapter.config.config_kwargs['execution_enabled'] = True
+    adapter.enable()
+    assert adapter._enabled and adapter._arm.mode == 1
+    adapter._arm.mode = 0
+    adapter.set_normal_mode()
+    assert adapter._arm.mode == 1
+    adapter.command_joint_positions(np.zeros(6))
+
+
+def test_mode_report_timeout_does_not_issue_motion_or_hide_enabled_state(adapter, monkeypatch):
+    adapter.config.config_kwargs.update(execution_enabled=True, mode_switch_timeout_s=.01)
+    adapter._arm.mode = 0
+    with pytest.raises(TimeoutError, match='mode switch not reported'):
+        adapter.enable()
+    assert adapter._enabled  # cleanup must know that motion_enable succeeded
+    assert not any(call[0] == 'set_servo_angle_j' for call in FakeArm.calls)
+    adapter.disable()
+    assert not adapter._enabled
+
+
+def test_gripper_speed_is_applied_once_and_absolute_width_commands_remain_nonblocking(adapter, monkeypatch):
+    from unittest.mock import Mock
+    adapter.config.config_kwargs.update(execution_enabled=True, gripper_speed=5000)
+    for name in ('set_gripper_enable', 'set_gripper_mode', 'set_gripper_speed', 'set_gripper_position'):
+        monkeypatch.setattr(adapter._arm, name, Mock(return_value=0), raising=False)
+    adapter.init_gripper()
+    adapter.command_gripper(.085, force_n=0.)
+    adapter.command_gripper(.0425, force_n=0.)
+    adapter.command_gripper(0., force_n=0.)
+    adapter._arm.set_gripper_speed.assert_called_once_with(5000)
+    assert [(call.args[0], call.kwargs) for call in adapter._arm.set_gripper_position.call_args_list] == [
+        (800, {'wait': False}), (400, {'wait': False}), (0, {'wait': False})]
+
+
+@pytest.mark.parametrize('speed', [None, -1])
+def test_gripper_controller_speed_can_be_left_unchanged(adapter, monkeypatch, speed):
+    from unittest.mock import Mock
+    adapter.config.config_kwargs.update(execution_enabled=True, gripper_speed=speed)
+    for name in ('set_gripper_enable', 'set_gripper_mode', 'set_gripper_speed'):
+        monkeypatch.setattr(adapter._arm, name, Mock(return_value=0), raising=False)
+    adapter.init_gripper()
+    adapter._arm.set_gripper_speed.assert_not_called()
+
+
+@pytest.mark.parametrize('speed', [0, -2, np.nan, np.inf, 1.5, True, 'invalid'])
+def test_invalid_gripper_speed_cannot_enable_hardware(adapter, monkeypatch, speed):
+    from unittest.mock import Mock
+    adapter.config.config_kwargs.update(execution_enabled=True, gripper_speed=speed)
+    enable = Mock(return_value=0)
+    monkeypatch.setattr(adapter._arm, 'set_gripper_enable', enable, raising=False)
+    with pytest.raises(ValueError, match='gripper_speed'):
+        adapter.init_gripper()
+    enable.assert_not_called()
+
+
+def test_gripper_sdk_failure_is_reported_instead_of_accepting_bad_feedback(adapter, monkeypatch):
+    from unittest.mock import Mock
+    adapter.config.config_kwargs.update(execution_enabled=True, gripper_speed=5000)
+    for name in ('set_gripper_enable', 'set_gripper_mode'):
+        monkeypatch.setattr(adapter._arm, name, Mock(return_value=0), raising=False)
+    monkeypatch.setattr(adapter._arm, 'set_gripper_speed', Mock(return_value=19), raising=False)
+    with pytest.raises(RuntimeError, match='set_gripper_speed failed with code 19'):
+        adapter.init_gripper()
+    monkeypatch.setattr(adapter._arm, 'get_gripper_position', Mock(return_value=(19, 800)), raising=False)
+    with pytest.raises(RuntimeError, match='get_gripper_position failed with code 19'):
+        adapter.read_gripper_state()
+
+
+def test_read_only_endpoint_cannot_apply_gripper_speed(adapter, monkeypatch):
+    from unittest.mock import Mock
+    adapter.config.config_kwargs['gripper_speed'] = 5000
+    speed = Mock(return_value=0)
+    monkeypatch.setattr(adapter._arm, 'set_gripper_speed', speed, raising=False)
+    with pytest.raises(RuntimeError, match='execution is disabled'):
+        adapter.init_gripper()
+    speed.assert_not_called()

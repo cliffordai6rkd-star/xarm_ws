@@ -1,0 +1,726 @@
+left:
+  RobotConfig:
+    robot_ip: 192.168.1.203
+    robot_mode: 6
+    robot_speed: 20
+    robot_acc: 100
+    reset_q: &id001
+    - 0.0
+    - 0.0
+    - 0.0
+    - 1.5707959999999999
+    - 0.0
+    - 1.5707959999999999
+    - 0.0
+    reset_speed: 10
+    reset_acc: 50
+    reset_timeout: 60
+    reset_tolerance: 0.03
+    command_timeout: 0.5
+    collision_sensitivity: null
+    gripper_type: 1
+  TeleoperatorConfig:
+    port: /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTBXAQE9-if00-port0
+    baudrate: 57600
+    joint_ids:
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    joint_signs:
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    gripper_id: 8
+    torque_joint_ids: []
+    fps: 30
+    read_timeout: 0.2
+    watchdog_timeout: 1.0
+    alignment_tolerance: 0.05
+    max_joint_step: 0.25
+    max_joint_velocity: 0.5
+    gripper_open_deg: 197.490234375
+    gripper_close_deg: 155.490234375
+    gripper_travel_deg: -42
+    hold_pwm: 100
+    hold_pwm_by_joint:
+    - 300
+    - 600
+    - 300
+    - 600
+    - 300
+    - 300
+    - 300
+    joint_limits: null
+    control_mode: position
+    dynamics_urdf: ../models/xarm7_dynamics.urdf
+    dynamics_joint_names:
+    - joint1
+    - joint2
+    - joint3
+    - joint4
+    - joint5
+    - joint6
+    - joint7
+    mit_kp: null
+    mit_kd: null
+    mit_torque_limit_nm: null
+    mit_acceleration_limit: 1.0
+    mit_tracking_error_limit: 0.15
+    joint_offsets:
+    - 1.5818409884676732
+    - 3.1354567304382504
+    - 3.0188741905589422
+    - 1.2931461309824928
+    - 3.0986411915289946
+    - 1.5108180047834654
+    - 1.667437116431692
+    leader_reference_q:
+    - 1.5818409884676732
+    - 3.1354567304382504
+    - 3.0188741905589422
+    - 2.8639421309824926
+    - 3.0986411915289946
+    - 3.0816140047834653
+    - 1.667437116431692
+    leader_passive: true
+    damping_enabled: false
+    start_joints: *id001
+  CalibrationStatus:
+    reference_ready: true
+    direction_verified:
+    - true
+    - true
+    - true
+    - true
+    - true
+    - true
+    - true
+    checks:
+      '1':
+        old_sign: 1
+        new_sign: 1
+        before_raw_rad:
+        - 1.5830681730979814
+        - 3.1366839150685593
+        - 3.0188741905589422
+        - 2.8639421309824926
+        - 3.09710721074111
+        - 3.0817674028622535
+        - 1.660074008649841
+        after_raw_rad:
+        - 1.8420041300930776
+        - 3.1132140090139093
+        - 2.952913016679859
+        - 2.8455343615278643
+        - 3.137604303541291
+        - 3.0771654604985956
+        - 1.6619147855953038
+        raw_delta_deg:
+        - 14.835937499999998
+        - -1.3447265624999787
+        - -3.7792968750000413
+        - -1.0546875000000346
+        - 2.3203124999999845
+        - -0.2636718750000532
+        - 0.10546875000000855
+        xarm_delta_deg: 14.999977780745436
+        method: Operator manually moved GELLO in the observed positive xArm direction
+      '2':
+        old_sign: -1
+        new_sign: 1
+        before_raw_rad:
+        - 1.5233963204492302
+        - 3.1331557592564216
+        - 3.0328334157287014
+        - 2.8393984383763216
+        - 3.0833013836501384
+        - 3.06182565261974
+        - 1.6091458464920376
+        after_raw_rad:
+        - 1.5247769031583276
+        - 3.341010156014927
+        - 3.0882101221713727
+        - 2.879281938861348
+        - 3.0879033260137954
+        - 3.079466431680425
+        - 1.603470117576861
+        raw_delta_deg:
+        - 0.07910156250001595
+        - 11.909179687500057
+        - 3.1728515624999827
+        - 2.285156249999986
+        - 0.2636718750000023
+        - 1.01074218750003
+        - -0.3251953124999808
+        xarm_delta_deg: 14.999977780745436
+        method: Operator manually moved GELLO in the observed positive xArm direction
+      '3':
+        old_sign: 1
+        new_sign: 1
+        before_raw_rad:
+        - 1.5602118593584855
+        - 3.1492625575292212
+        - 2.994944090267926
+        - 2.851670284679407
+        - 3.119349932165451
+        - 3.0719499258197844
+        - 1.7303303287350036
+        after_raw_rad:
+        - 1.5671147729039707
+        - 3.151410130632261
+        - 3.2911557804086433
+        - 2.8726858214734405
+        - 3.1170489609836234
+        - 3.0742508970016136
+        - 1.7287963479471178
+        raw_delta_deg:
+        - 0.39550781249999073
+        - 0.1230468749999824
+        - 16.971679687500007
+        - 1.2041015625000095
+        - -0.13183593749996297
+        - 0.1318359375000393
+        - -0.08789062500000924
+        xarm_delta_deg: 14.999977780745436
+        method: Operator manually moved GELLO in the observed positive xArm direction
+      '4':
+        old_sign: 1
+        new_sign: 1
+        before_raw_rad:
+        - 1.591505067431353
+        - 3.106924687783578
+        - 2.9452431127404313
+        - 2.834796496012665
+        - 3.1787149886566257
+        - 3.086062549068333
+        - 1.7088545977046041
+        after_raw_rad:
+        - 1.5789264249706902
+        - 3.0713363335046306
+        - 2.943862530031334
+        - 3.074097498922825
+        - 3.185464504123322
+        - 3.1029363377350743
+        - 1.716677899722821
+        raw_delta_deg:
+        - -0.7207031250000223
+        - -2.039062500000021
+        - -0.07910156250000323
+        - 13.710937499999991
+        - 0.38671874999995925
+        - 0.966796874999949
+        - 0.44824218750000133
+        xarm_delta_deg: 14.999977780745446
+        method: Operator manually moved GELLO in the observed positive xArm direction
+      '5':
+        old_sign: 1
+        new_sign: 1
+        before_raw_rad:
+        - 1.5540759362069434
+        - 3.080847014389522
+        - 3.017340209771056
+        - 2.8716120349219203
+        - 3.1584664422565356
+        - 3.1451208094019303
+        - 1.7002643052924444
+        after_raw_rad:
+        - 1.5944196309283356
+        - 3.0825343932561955
+        - 3.038202348486301
+        - 2.82145086315806
+        - 3.426913080136522
+        - 3.1566256653110725
+        - 1.7068604226803525
+        raw_delta_deg:
+        - 2.311523437499991
+        - 0.09667968749996436
+        - 1.195312500000029
+        - -2.874023437499982
+        - 15.380859374999964
+        - 0.659179687499993
+        - 0.3779296874999914
+        xarm_delta_deg: 14.999977780745436
+        method: Operator manually moved GELLO in the observed positive xArm direction
+      '6':
+        old_sign: -1
+        new_sign: 1
+        before_raw_rad:
+        - 1.612827400382963
+        - 3.111066435910869
+        - 3.029612056074142
+        - 2.8501363038915213
+        - 3.094039249165338
+        - 3.1084586685714632
+        - 1.6965827514015186
+        after_raw_rad:
+        - 1.6007089521586664
+        - 3.1236450783715304
+        - 3.0263906964195812
+        - 2.8585731982248928
+        - 3.0833013836501384
+        - 3.3870295796514958
+        - 1.7042526553409476
+        raw_delta_deg:
+        - -0.6943359375000043
+        - 0.7207031249999587
+        - -0.18457031250004993
+        - 0.48339843750002537
+        - -0.6152343750000138
+        - 15.960937500000004
+        - 0.43945312500004624
+        xarm_delta_deg: 14.999977780745446
+        method: Operator manually moved GELLO in the observed positive xArm direction
+      '7':
+        old_sign: 1
+        new_sign: 1
+        before_raw_rad:
+        - 1.6080720599405176
+        - 3.104010124286595
+        - 3.0280780752862557
+        - 2.864095529061281
+        - 3.1102994455169264
+        - 3.1339227496503654
+        - 1.6965827514015186
+        after_raw_rad:
+        - 1.599788563685935
+        - 3.10232274541992
+        - 2.9958644787406574
+        - 2.8654761117703775
+        - 3.1339227496503654
+        - 3.126099447632148
+        - 1.8929322922508809
+        raw_delta_deg:
+        - -0.47460937500000666
+        - -0.0966796875000407
+        - -1.8457031249999905
+        - 0.07910156249997778
+        - 1.35351562500001
+        - -0.4482421875000268
+        - 11.250000000000012
+        xarm_delta_deg: 14.999977780745436
+        method: Operator manually moved GELLO in the observed positive xArm direction
+    started_at: '2026-09-29T06:23:51.097016+00:00'
+    damping:
+      enabled: true
+      coordinates: encoder
+      weak_hold_enabled: false
+      gain:
+      - 8
+      - 8
+      - 8
+      - 8
+      - 8
+      - 8
+      - 8
+      current_limit:
+      - 15
+      - 15
+      - 15
+      - 15
+      - 15
+      - 15
+      - 15
+      capabilities:
+        enabled: true
+        models:
+          1:
+            model_number: 1200
+            model_name: XL330-M288
+            current_control: true
+          2:
+            model_number: 1200
+            model_name: XL330-M288
+            current_control: true
+          3:
+            model_number: 1200
+            model_name: XL330-M288
+            current_control: true
+          4:
+            model_number: 1200
+            model_name: XL330-M288
+            current_control: true
+          5:
+            model_number: 1200
+            model_name: XL330-M288
+            current_control: true
+          6:
+            model_number: 1200
+            model_name: XL330-M288
+            current_control: true
+          7:
+            model_number: 1200
+            model_name: XL330-M288
+            current_control: true
+        unit: raw_current
+        watchdog_ms: 500
+right:
+  RobotConfig:
+    robot_ip: 192.168.1.196
+    robot_mode: 6
+    robot_speed: 20
+    robot_acc: 100
+    reset_q: &id002
+    - 0.0
+    - 0.0
+    - 0.0
+    - 1.5707959999999999
+    - 0.0
+    - 1.5707959999999999
+    - 0.0
+    reset_speed: 10
+    reset_acc: 50
+    reset_timeout: 60
+    reset_tolerance: 0.03
+    command_timeout: 0.5
+    collision_sensitivity: null
+    gripper_type: 1
+  TeleoperatorConfig:
+    port: /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTBX14YZ-if00-port0
+    baudrate: 57600
+    joint_ids:
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    joint_signs:
+    - 1
+    - -1
+    - 1
+    - 1
+    - 1
+    - 1
+    - 1
+    gripper_id: 8
+    torque_joint_ids: []
+    fps: 100
+    read_timeout: 0.2
+    watchdog_timeout: 1.0
+    alignment_tolerance: 0.05
+    max_joint_step: 0.25
+    max_joint_velocity: 0.5
+    gripper_open_deg: 203.203125
+    gripper_close_deg: 161.203125
+    gripper_travel_deg: -42
+    hold_pwm_by_joint:
+    - 300
+    - 600
+    - 300
+    - 600
+    - 300
+    - 300
+    - 300
+    joint_limits: null
+    control_mode: position
+    dynamics_urdf: ../models/xarm7_dynamics.urdf
+    dynamics_joint_names:
+    - joint1
+    - joint2
+    - joint3
+    - joint4
+    - joint5
+    - joint6
+    - joint7
+    mit_kp: null
+    mit_kd: null
+    mit_torque_limit_nm: null
+    mit_acceleration_limit: 1.0
+    mit_tracking_error_limit: 0.15
+    joint_offsets:
+    - 4.686311306990633
+    - 3.118276145613931
+    - -0.004601942363656923
+    - 1.2305597148367589
+    - 2.9345052472252315
+    - 1.4979325661652252
+    - 4.758408404021259
+    leader_reference_q:
+    - 4.686311306990633
+    - 3.118276145613931
+    - -0.004601942363656923
+    - 2.8013557148367587
+    - 2.9345052472252315
+    - 3.068728566165225
+    - 4.758408404021259
+    leader_passive: true
+    damping_enabled: false
+    start_joints: *id002
+  CalibrationStatus:
+    reference_ready: true
+    direction_verified:
+    - true
+    - true
+    - true
+    - true
+    - true
+    - true
+    - true
+    checks:
+      '1':
+        old_sign: 1
+        new_sign: 1
+        before_raw_rad:
+        - 4.659159847045058
+        - 3.097874201135052
+        - -0.005062136600022615
+        - 2.7979809571034093
+        - 2.934812043382809
+        - 3.0803868201531563
+        - 4.764851123330378
+        after_raw_rad:
+        - 4.913954055912862
+        - 3.0624392449348936
+        - -0.012578642460662256
+        - 2.8117867841943807
+        - 2.938186801116157
+        - 3.07777905281375
+        - 4.768686075300091
+        raw_delta_deg:
+        - 14.598632812499963
+        - -2.030273437500015
+        - -0.43066406249999994
+        - 0.7910156250000323
+        - 0.19335937499997963
+        - -0.14941406250005135
+        - 0.21972656249994676
+        xarm_delta_deg: 14.999977780745436
+        method: Operator manually moved GELLO in the observed positive xArm direction
+      '2':
+        old_sign: -1
+        new_sign: -1
+        before_raw_rad:
+        - 4.656091885469287
+        - 3.101555755025978
+        - 0.025924275315267337
+        - 2.8102528034064944
+        - 2.932204276043403
+        - 3.082227597098618
+        - 4.764851123330378
+        after_raw_rad:
+        - 4.69106664743308
+        - 2.875140190734057
+        - -0.030526217678924262
+        - 2.8114799880368038
+        - 2.933278062594923
+        - 3.071949925819785
+        - 4.759175394415202
+        raw_delta_deg:
+        - 2.003906249999997
+        - -12.972656250000021
+        - -3.234375
+        - 0.0703125000000481
+        - 0.061523437500016646
+        - -0.5888671874999704
+        - -0.325195312499968
+        xarm_delta_deg: 14.999977780745436
+        method: Operator manually moved GELLO in the observed positive xArm direction
+      '3':
+        old_sign: 1
+        new_sign: 1
+        before_raw_rad:
+        - 4.684163733887594
+        - 3.083761577886505
+        - -0.030372819600135697
+        - 2.7870896935094214
+        - 2.9345052472252315
+        - 3.0782392470501163
+        - 4.766385104118266
+        after_raw_rad:
+        - 4.688152083936097
+        - 3.0708761392682655
+        - 0.26844663787998724
+        - 2.784788722327593
+        - 2.9334314606737113
+        - 3.0845285682804473
+        - 4.766845298354631
+        raw_delta_deg:
+        - 0.22851562500000366
+        - -0.7382812499999962
+        - 17.121093750000004
+        - -0.13183593749998843
+        - -0.061523437500016646
+        - 0.3603515624999921
+        - 0.02636718749996715
+        xarm_delta_deg: 14.999977780745436
+        method: Operator manually moved GELLO in the observed positive xArm direction
+      '4':
+        old_sign: 1
+        new_sign: 1
+        before_raw_rad:
+        - 4.6559384873904985
+        - 3.1118334263048117
+        - -0.00337475773334841
+        - 2.767301341345697
+        - 2.9375732088010023
+        - 3.0483266216863463
+        - 4.764544327172801
+        after_raw_rad:
+        - 4.670818101032989
+        - 3.15478488836561
+        - 0.015493205957644978
+        - 2.9835926324375714
+        - 2.9349654414615975
+        - 3.0572237102560824
+        - 4.7627035502273385
+        raw_delta_deg:
+        - 0.8525390624999726
+        - 2.4609375000000298
+        - 1.0810546875000002
+        - 12.392578124999956
+        - -0.14941406249994957
+        - 0.5097656249999671
+        - -0.10546874999997038
+        xarm_delta_deg: 14.999977780745446
+        method: Operator manually moved GELLO in the observed positive xArm direction
+      '5':
+        old_sign: 1
+        new_sign: 1
+        before_raw_rad:
+        - 4.718371505457444
+        - 3.1316217784685367
+        - -0.04356505437595222
+        - 2.808258628382243
+        - 2.952913016679859
+        - 3.122264495662434
+        - 4.759942384809144
+        after_raw_rad:
+        - 4.7042588822088955
+        - 3.116128572510892
+        - -0.04065049087896948
+        - 2.8134741630610547
+        - 3.2721344186388612
+        - 3.11413439748664
+        - 4.7611695694394545
+        raw_delta_deg:
+        - -0.8085937500000443
+        - -0.8876953124999967
+        - 0.16699218750000133
+        - 0.2988281250000263
+        - 18.29003906250002
+        - -0.4658203125000134
+        - 0.07031250000009899
+        xarm_delta_deg: 14.999977780745436
+        method: Operator manually moved GELLO in the observed positive xArm direction
+      '6':
+        old_sign: 1
+        new_sign: 1
+        before_raw_rad:
+        - 4.703185095657376
+        - 3.1070780858623666
+        - -0.03681553890925538
+        - 2.827126592073236
+        - 2.9835926324375714
+        - 3.1291674092079194
+        - 4.759942384809144
+        after_raw_rad:
+        - 4.709474416887707
+        - 3.102476143498709
+        - -0.025924275315267344
+        - 2.8512100904430415
+        - 3.0004664211043144
+        - 3.4040567663970265
+        - 4.760249180966721
+        raw_delta_deg:
+        - 0.3603515624999921
+        - -0.26367187500002776
+        - 0.6240234374999991
+        - 1.3798828125000535
+        - 0.9667968750000507
+        - 15.750000000000012
+        - 0.01757812499996114
+        xarm_delta_deg: 14.999977780745446
+        method: Operator manually moved GELLO in the observed positive xArm direction
+      '7':
+        old_sign: 1
+        new_sign: 1
+        before_raw_rad:
+        - 4.696588978269469
+        - 3.0938858510865495
+        - -0.028532042654672924
+        - 2.8608741694067206
+        - 2.995404284504291
+        - 3.0817674028622535
+        - 4.761476365597031
+        after_raw_rad:
+        - 4.677414218420897
+        - 3.1110664359108684
+        - -0.03359417925469554
+        - 2.8593401886188348
+        - 2.9957110806618688
+        - 3.09710721074111
+        - 5.061062813471095
+        raw_delta_deg:
+        - -1.0986328125000902
+        - 0.9843749999999865
+        - -0.29003906249999983
+        - -0.08789062500000924
+        - 0.01757812500003747
+        - 0.8789062500000161
+        - 17.165039062499886
+        xarm_delta_deg: 14.999977780745436
+        method: Operator manually moved GELLO in the observed positive xArm direction
+    started_at: '2026-09-29T06:51:40.591539+00:00'
+    damping:
+      enabled: true
+      coordinates: encoder
+      weak_hold_enabled: false
+      gain:
+      - 8
+      - 8
+      - 8
+      - 8
+      - 8
+      - 8
+      - 8
+      current_limit:
+      - 15
+      - 15
+      - 15
+      - 15
+      - 15
+      - 15
+      - 15
+      capabilities:
+        enabled: true
+        models:
+          1:
+            model_number: 1200
+            model_name: XL330-M288
+            current_control: true
+          2:
+            model_number: 1200
+            model_name: XL330-M288
+            current_control: true
+          3:
+            model_number: 1200
+            model_name: XL330-M288
+            current_control: true
+          4:
+            model_number: 1200
+            model_name: XL330-M288
+            current_control: true
+          5:
+            model_number: 1200
+            model_name: XL330-M288
+            current_control: true
+          6:
+            model_number: 1200
+            model_name: XL330-M288
+            current_control: true
+          7:
+            model_number: 1200
+            model_name: XL330-M288
+            current_control: true
+        unit: raw_current
+        watchdog_ms: 500
+calibration_format: manual_origin_selected_axes_v1

@@ -33,6 +33,9 @@ _CURRENT_TABLE = {
     "velocity_unit_rad_s": 0.229 * 2 * math.pi / 60.0,
 }
 
+# XL330 control-table maximum Current Limit, raw units (1 mA/unit).
+_ALIGNMENT_MAX_CURRENT = {1190: 1750, 1200: 1750}
+
 
 def check(code, operation):
     if code != 0:
@@ -43,7 +46,7 @@ class GelloReader:
     """One synchronous, checked Dynamixel transaction per sample; no cached fallback."""
 
     def __init__(self, config):
-        from dynamixel_sdk import PortHandler, PacketHandler, GroupSyncRead
+        from dynamixel_sdk import PortHandler, PacketHandler, GroupSyncRead, GroupSyncWrite
 
         class CheckedSyncRead(GroupSyncRead):
             def rxPacket(self):
@@ -78,11 +81,16 @@ class GelloReader:
             self.port.ser.write_timeout = config.read_timeout
             self.group = CheckedSyncRead(self.port, self.packet, 132, 4)
             self.reset_group = CheckedSyncRead(self.port, self.packet, 124, 12)
+            self.current_writer = GroupSyncWrite(self.port, self.packet, 102, 2)
+            self.current_feedback = CheckedSyncRead(self.port, self.packet, 102, 2)
             for motor_id in self.ids:
                 if not self.group.addParam(motor_id):
                     raise RuntimeError(f"Cannot add Dynamixel ID {motor_id}")
                 if not self.reset_group.addParam(motor_id):
                     raise RuntimeError(f"Cannot add reset feedback Dynamixel ID {motor_id}")
+            for motor_id in config.joint_ids:
+                if not self.current_feedback.addParam(motor_id):
+                    raise RuntimeError(f'Cannot add current feedback Dynamixel ID {motor_id}')
             self.read()
         except BaseException:
             if self.port.ser is not None:
@@ -144,13 +152,20 @@ class GelloReader:
         if gains.shape != (n,) or limits.shape != (n,) or np.any(gains < 0) or np.any(limits <= 0):
             raise ValueError('damping_gain and damping_current_limit must contain one positive value per joint')
         watchdog_ms = int(getattr(config, 'damping_watchdog_ms', 100))
-        if watchdog_ms <= 0 or watchdog_ms > 5100 or watchdog_ms % 20:
-            raise ValueError('damping_watchdog_ms must be a positive multiple of 20 up to 5100')
+        if watchdog_ms <= 0 or watchdog_ms > 2540 or watchdog_ms % 20:
+            raise ValueError('damping_watchdog_ms must be a positive multiple of 20 up to 2540')
         with self.lock:
+            # EEPROM mode/limit writes can take longer than the watchdog.
+            # Keep EVERY joint off throughout configuration; enable only once
+            # all joints are ready, immediately before the streaming loop.
             for motor_id in self.config.joint_ids:
                 self._write(motor_id, _CURRENT_TABLE['torque_enable'], 0)
+                self._write(motor_id, _CURRENT_TABLE['watchdog'], 0)
+            for motor_id, limit in zip(self.config.joint_ids, limits):
                 self._write(motor_id, _CURRENT_TABLE['operating_mode'], 0)
-                self._write(motor_id, _CURRENT_TABLE['current_limit'], int(limits[list(self.config.joint_ids).index(motor_id)]), size=2)
+                self._write(motor_id, _CURRENT_TABLE['current_limit'], int(limit), size=2)
+                self._write(motor_id, _CURRENT_TABLE['goal_current'], 0, size=2)
+            for motor_id in self.config.joint_ids:
                 self._write(motor_id, _CURRENT_TABLE['watchdog'], watchdog_ms // 20)
                 self._write(motor_id, _CURRENT_TABLE['torque_enable'], 1)
         return {'enabled': True, 'models': capabilities, 'unit': 'raw_current',
@@ -161,8 +176,99 @@ class GelloReader:
         if not np.isfinite(values).all():
             raise ValueError('damping current contains non-finite values')
         with self.lock:
-            for motor_id, value in zip(self.config.joint_ids, values):
-                self._write(motor_id, _CURRENT_TABLE['goal_current'], int(np.clip(np.rint(value), -32768, 32767)) & 0xffff, size=2)
+            if self.closed:
+                raise RuntimeError('GELLO port is closed')
+            words = [int(np.clip(np.rint(v), -32768, 32767)) & 0xffff for v in values]
+            self.current_writer.clearParam()
+            try:
+                for motor_id, word in zip(self.config.joint_ids, words):
+                    if not self.current_writer.addParam(motor_id, [word & 0xff, (word >> 8) & 0xff]):
+                        raise RuntimeError(f'Cannot add damping current for Dynamixel {motor_id}')
+                check(self.current_writer.txPacket(), 'GELLO sync current write')
+                # Broadcast writes have no per-motor ACK. Verify every target
+                # via checked sync read, preserving device/error detection.
+                check(self.current_feedback.txRxPacket(), 'GELLO current readback')
+                for motor_id, expected in zip(self.config.joint_ids, words):
+                    if not self.current_feedback.isAvailable(motor_id, 102, 2):
+                        raise RuntimeError(f'Missing current readback for Dynamixel {motor_id}')
+                    actual = self.current_feedback.getData(motor_id, 102, 2)
+                    if actual != expected:
+                        raise RuntimeError(f'Dynamixel {motor_id} Goal Current write/read mismatch: '
+                                           f'expected={expected}, actual={actual}')
+            finally:
+                self.current_writer.clearParam()
+
+    def enable_alignment_hold(self, goal_current=80):
+        """Current-limited position hold at the CURRENT pose; no homing motion.
+
+        Goal Current stays at this raw value as the position goals advance.
+        The model's EEPROM Current Limit remains a separate hardware bound.
+        """
+        if type(goal_current) is not int or goal_current <= 0:
+            raise ValueError('alignment Goal Current must be a positive integer')
+        capabilities = self.detect_capabilities()
+        unsupported = [i for i, info in capabilities.items()
+                       if info.get('model_number') not in _ALIGNMENT_MAX_CURRENT]
+        if unsupported:
+            raise ValueError(f'Alignment hold has no verified maximum current for IDs {unsupported}')
+        if any(goal_current > _ALIGNMENT_MAX_CURRENT[info['model_number']] for info in capabilities.values()):
+            raise ValueError('Alignment current exceeds model maximum')
+        limits = {i: _ALIGNMENT_MAX_CURRENT[info['model_number']] for i, info in capabilities.items()}
+        with self.lock:
+            for motor_id in self.config.joint_ids:
+                self._write(motor_id, 64, 0)
+                self._write(motor_id, 98, 0)
+            for motor_id in self.config.joint_ids:
+                # Mode 5 uses Goal Current to bound the position loop output.
+                self._write(motor_id, 11, 5)
+                self._write(motor_id, 38, limits[motor_id], size=2)
+                current = self._read_register(motor_id, 132, 4)
+                if current > 0x7fffffff:
+                    current -= 0x100000000
+                lower = self._read_register(motor_id, 52, 4)
+                upper = self._read_register(motor_id, 48, 4)
+                if not lower <= current % 4096 <= upper:
+                    raise ValueError(f'Dynamixel {motor_id} current pose outside position limits')
+                pwm = self._read_register(motor_id, 36, 2)
+                self._write(motor_id, 100, pwm, size=2)
+                self._write(motor_id, 102, goal_current, size=2)
+                self._write(motor_id, 116, current & 0xffffffff, size=4)
+            for motor_id in self.config.joint_ids:
+                self._write(motor_id, 64, 1)
+        return {'mode': 'current_based_position', 'goal_current_raw': goal_current,
+                'current_limits_raw': limits, 'models': capabilities}
+
+    def alignment_reset_plan(self, reference, steps=15, max_travel_deg=90.):
+        """Validate all interpolated goals before commanding any reset movement."""
+        n = len(self.config.joint_ids)
+        reference = np.asarray(reference, float).reshape(n)
+        start = self.read()[:n]
+        target = reference+np.rint((start-reference)/(2*np.pi))*(2*np.pi)
+        if not np.isfinite(target).all() or np.max(np.abs(target-start)) > math.radians(max_travel_deg):
+            raise ValueError('GELLO reset exceeds configured travel; manually approach the saved pose first')
+        plan = [start+(target-start)*i/steps for i in range(1, steps+1)]
+        with self.lock:
+            for j, motor_id in enumerate(self.config.joint_ids):
+                if self._read_register(motor_id, 11, 1) != 5:
+                    raise ValueError('GELLO alignment reset requires current-based position mode (5)')
+                lower = self._read_register(motor_id, 52, 4)
+                upper = self._read_register(motor_id, 48, 4)
+                for pose in plan:
+                    ticks = int(round(pose[j]*2048/math.pi))
+                    if not -1048575 <= ticks <= 1048575 or not lower <= ticks % 4096 <= upper:
+                        raise ValueError(f'Dynamixel {motor_id} reset plan exceeds position limits')
+        return plan
+
+    def command_alignment_positions(self, pose):
+        values = np.asarray(pose, float).reshape(len(self.config.joint_ids))
+        if not np.isfinite(values).all():
+            raise ValueError('GELLO reset target contains invalid values')
+        ticks = np.rint(values*2048/math.pi).astype(np.int64)
+        if np.any(np.abs(ticks) > 1048575):
+            raise ValueError('GELLO reset target exceeds mode 5 range')
+        with self.lock:
+            for motor_id, value in zip(self.config.joint_ids, ticks):
+                self._write(motor_id, 116, int(value) & 0xffffffff, size=4)
 
     @staticmethod
     def compute_damping_current(mapped, previous_mapped, dt, config, hold_reference=None, previous_velocity=None):
@@ -185,12 +291,19 @@ class GelloReader:
             current += np.clip(weak, -weak_limit, weak_limit)
         if current.shape != mapped.shape or limit.shape != mapped.shape:
             raise ValueError('damping vectors must match the mapped GELLO joints')
-        return np.clip(current, -limit, limit)
+        # Velocity/hold error are in mapped robot coordinates; Goal Current is
+        # in encoder coordinates. A flipped mapping must flip current as well.
+        signs = np.asarray(getattr(config, 'joint_signs', np.ones(mapped.size)), dtype=float)
+        if signs.shape != mapped.shape or not np.all(np.isin(signs, [-1., 1.])):
+            raise ValueError('damping joint_signs must contain one +1/-1 per joint')
+        return np.clip(current, -limit, limit) * signs
 
     def disable_current_damping(self):
         with self.lock:
             for motor_id in self.config.joint_ids:
                 try:
+                    self._write(motor_id, _CURRENT_TABLE['torque_enable'], 0)
+                    self._write(motor_id, _CURRENT_TABLE['watchdog'], 0)
                     self._write(motor_id, _CURRENT_TABLE['goal_current'], 0, size=2)
                     self._write(motor_id, _CURRENT_TABLE['torque_enable'], 0)
                     # Leave the control table in position mode so a later
@@ -240,7 +353,16 @@ class GelloReader:
             method = self.packet.write4ByteTxRx
         comm, error = method(self.port, motor_id, address, value)
         check(comm, f"Dynamixel {motor_id} write {address}")
-        check(error, f"Dynamixel {motor_id} device error")
+        if error:
+            detail = ''
+            if address == _CURRENT_TABLE['goal_current']:
+                try:
+                    watchdog = self._read_register(motor_id, _CURRENT_TABLE['watchdog'], 1)
+                    detail = f'; watchdog={watchdog} (255 means expired)'
+                except Exception:
+                    pass
+            raise RuntimeError(f'Dynamixel {motor_id} write register {address}, value={value}: '
+                               f'device error code={error}{detail}')
 
     def _read_register(self, motor_id, address, size):
         method = {1: self.packet.read1ByteTxRx,
