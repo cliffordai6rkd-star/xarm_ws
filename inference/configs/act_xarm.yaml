@@ -1,0 +1,24 @@
+# Native ACT: policy_config.pkl + dataset_stats.pkl + policy_*.ckpt。
+policy:
+  type: act
+  checkpoint: ../../../act/outputs/erase_board_eepose
+  source_path: ../../../act
+  dataset_path: ../../runs/erase_board_lerobotv3  # 原始训练图像尺寸、FPS
+  action_key: action.joint  # 部署动作是七轴绝对关节角，rad
+  device: cuda:0
+  torch_threads: 1
+  # 当前此目录的 checkpoint 设置了 quaternion_indices，不能用于 joint q。
+  # 请用 action.joint 且没有 --quaternion_indices 的训练输出覆盖 checkpoint。
+hardware_config: ../../gello_teleop/config/xarm7_gello_dual_dataset.yaml
+active_arms: null
+observation:
+  camera_map: {}
+  maximum_camera_age_s: 0.3
+  maximum_camera_skew_s: 0.06
+  maximum_state_age_s: 0.15
+  maximum_alignment_gap_s: 0.15
+execution:
+  control_hz: 100
+  action_rate_hz: null
+  maximum_prediction_age_s: 1.0
+  startup_timeout_s: 15

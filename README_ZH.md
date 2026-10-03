@@ -185,7 +185,10 @@ xArm SDK 默认只读；只有 endpoint 显式设置 `execution_enabled: true` �
 python -m gello_teleop.dual_gello_collect \
   -c gello_teleop/config/xarm7_gello_dual_dataset.yaml
   、、、
-流程为连接检查 → xArm 复位 → GELLO 插值对齐 → 自动采样核对 → 接管；接管后按 r 采集，空格停止并保存，t 重新对齐后接管。
+流程为连接检查 → xArm 复位 → GELLO 插值对齐 → 自动采样核对 → 接管；接管后按 r 采集，Enter/空格结束本集采样并提示确认，y 保存、n 丢弃，等待确认时遥操继续，t 重新对齐后接管。
+
+GELLO/xArm 的 H5 每臂数据统一使用 `侧别_量_设备`，例如 `left_q_xarm`、`left_q_gello`、`right_q_xarm`、`right_q_gello`；单臂也保留侧别。末端位姿保存为 `left_q_eepose_xarm` 和 `right_eepose_xarm`，每帧为基座到 TCP 的 `4×4` 变换矩阵，平移单位米。完整字段和旧文件转换命令见 [数采数据字段说明](gello_teleop/README_ZH.md)。
+URDF 力矩窗口按 `active_arms` 显示每臂的 `tau_ext_l1` 和 J1～J7 的 `tau_ext`；双臂并排两列，单臂只显示所选侧。
 按 q 或 Ctrl+C 时，先停止遥操，再按 `alignment.reset_*` 配置返回本次启动的 `reset_q`，
 确认到位后保留 xArm 的位置保持和电机使能，再关闭连接退出。复位失败会报错并尝试原地保持。
 电流测试：

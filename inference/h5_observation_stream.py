@@ -21,6 +21,8 @@ from typing import Iterator, Mapping, Sequence
 
 import numpy as np
 
+from nero_collection.h5_schema import dataset_candidates
+
 
 STATE_WIDTH = 7
 WRENCH_WIDTH = 6
@@ -302,12 +304,63 @@ class H5ObservationEpisode:
                     f"available={available}"
                 )
 
+            arm_names = _h5_arm_names(h5)
+            if not arm_names:
+                arm_names = (str(arm_name) if arm_name is not None else "arm",)
+            if arm_name is not None:
+                if arm_name not in arm_names:
+                    raise ValueError(
+                        f"arm {arm_name!r} not found in teleop.arm_names={list(arm_names)}"
+                    )
+                selected_arm_index = arm_names.index(arm_name)
+                selected_arm_name = str(arm_name)
+            else:
+                selected_arm_index = int(arm_index)
+                if selected_arm_index < 0 or selected_arm_index >= len(arm_names):
+                    raise ValueError(
+                        f"arm_index={selected_arm_index} outside arm_names={list(arm_names)}"
+                    )
+                selected_arm_name = str(arm_names[selected_arm_index])
+
+            # Physical-device names are canonical.  Earlier episodes used
+            # role names, with either split or concatenated arm channels.
+            for key in ('q', 'dq', 'ddq', 'tau', 'wrench'):
+                if datasets is not None and key in datasets:
+                    continue
+                channel = _DEFAULT_DATASETS[key].removeprefix('teleop/')
+                for candidate in dataset_candidates(selected_arm_name, channel):
+                    candidate_path = f'teleop/{candidate}'
+                    if candidate_path in h5:
+                        names[key] = candidate_path
+                        break
+
+            def channel_arm_names(dataset_path):
+                dataset = h5[dataset_path]
+                if (dataset.attrs.get('arm_name') == selected_arm_name
+                        or dataset_path.startswith(f'teleop/{selected_arm_name}_')):
+                    return (selected_arm_name,)
+                return arm_names
+
+            def select_channel(dataset_path, width):
+                channel_arms = channel_arm_names(dataset_path)
+                return _select_arm_matrix(
+                    np.asarray(h5[dataset_path][:], dtype=np.float64), count, width,
+                    channel_arms, 0 if len(channel_arms) == 1 else selected_arm_index,
+                    dataset_path,
+                )
+
             # A few early episodes used one of the calibrated/predicted wrench
             # names.  Keep the fallback opt-out so a strict evaluator can force
             # the canonical ``wrench_ext`` contract.
             wrench_path = names["wrench"]
-            if wrench_path not in h5 and allow_wrench_aliases and wrench_path == _DEFAULT_DATASETS["wrench"]:
-                for candidate in ("teleop/wrench_cal", "teleop/wrench_pred"):
+            if (wrench_path not in h5 and allow_wrench_aliases
+                    and (datasets is None or 'wrench' not in datasets)):
+                aliases = (
+                    f'teleop/{candidate}'
+                    for alias in ('wrench_cal', 'wrench_pred')
+                    for candidate in dataset_candidates(selected_arm_name, alias)
+                )
+                for candidate in aliases:
                     if candidate in h5:
                         wrench_path = candidate
                         break
@@ -332,69 +385,14 @@ class H5ObservationEpisode:
             )
             count = state_timestamps.size
 
-            arm_names = _h5_arm_names(h5)
-            if not arm_names:
-                arm_names = (str(arm_name) if arm_name is not None else "arm",)
-            if arm_name is not None:
-                if arm_name not in arm_names:
-                    raise ValueError(
-                        f"arm {arm_name!r} not found in teleop.arm_names={list(arm_names)}"
-                    )
-                selected_arm_index = arm_names.index(arm_name)
-                selected_arm_name = str(arm_name)
-            else:
-                selected_arm_index = int(arm_index)
-                if selected_arm_index < 0 or selected_arm_index >= len(arm_names):
-                    raise ValueError(
-                        f"arm_index={selected_arm_index} outside arm_names={list(arm_names)}"
-                    )
-                selected_arm_name = str(arm_names[selected_arm_index])
-
-            raw_q = np.asarray(h5[required["q"]][:], dtype=np.float64)
-            state_width = _infer_joint_width(raw_q, len(arm_names), required["q"])
-            q = _select_arm_matrix(
-                raw_q,
-                count,
-                state_width,
-                arm_names,
-                selected_arm_index,
-                required["q"],
-            )
-            dq = _select_arm_matrix(
-                np.asarray(h5[required["dq"]][:], dtype=np.float64),
-                count,
-                state_width,
-                arm_names,
-                selected_arm_index,
-                required["dq"],
-            )
-            if ddq_path is None:
-                ddq = _derive_ddq(dq, state_timestamps)
-            else:
-                ddq = _select_arm_matrix(
-                    np.asarray(h5[ddq_path][:], dtype=np.float64),
-                    count,
-                    state_width,
-                    arm_names,
-                    selected_arm_index,
-                    ddq_path,
-                )
-            tau = _select_arm_matrix(
-                np.asarray(h5[required["tau"]][:], dtype=np.float64),
-                count,
-                state_width,
-                arm_names,
-                selected_arm_index,
-                required["tau"],
-            )
-            wrench = _select_arm_matrix(
-                np.asarray(h5[required["wrench"]][:], dtype=np.float64),
-                count,
-                WRENCH_WIDTH,
-                arm_names,
-                selected_arm_index,
-                required["wrench"],
-            )
+            raw_q = np.asarray(h5[required['q']][:], dtype=np.float64)
+            state_width = _infer_joint_width(raw_q, len(channel_arm_names(required['q'])), required['q'])
+            q = select_channel(required['q'], state_width)
+            dq = select_channel(required['dq'], state_width)
+            ddq = (_derive_ddq(dq, state_timestamps) if ddq_path is None
+                   else select_channel(ddq_path, state_width))
+            tau = select_channel(required['tau'], state_width)
+            wrench = select_channel(required['wrench'], WRENCH_WIDTH)
             camera_timestamps_by_name = {}
             frames_by_name = {}
             for requested_camera, camera_group in camera_groups.items():
@@ -860,18 +858,22 @@ def _h5_arm_names(h5: object) -> tuple[str, ...]:
             values = (values,)
         return tuple(_decode_h5_string(value) for value in values)
     metadata_path = "metadata/arm_names_json"
-    if metadata_path not in h5:
-        return ()
-    raw = _decode_h5_string(h5[metadata_path][()])
-    try:
-        parsed = json.loads(raw)
-    except (TypeError, json.JSONDecodeError):
-        return ()
-    if isinstance(parsed, str):
-        parsed = [parsed]
-    if not isinstance(parsed, (list, tuple)):
-        return ()
-    return tuple(str(value) for value in parsed if str(value))
+    if metadata_path in h5:
+        raw = _decode_h5_string(h5[metadata_path][()])
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            parsed = None
+        if isinstance(parsed, str):
+            parsed = [parsed]
+        if isinstance(parsed, (list, tuple)) and parsed:
+            return tuple(str(value) for value in parsed if str(value))
+    if teleop is not None:
+        return tuple(
+            arm for arm in ('left', 'right')
+            if any(name.startswith(f'{arm}_') for name in teleop)
+        )
+    return ()
 
 
 def _select_arm_matrix(

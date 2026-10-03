@@ -1,6 +1,7 @@
 """High-level model adapters."""
 
 from inference.policies.base import CallablePolicy
+from inference.policies.act import ACTPolicy
 from inference.policies.dp import (
     DPPolicy,
     DiffusionPolicy,
@@ -24,12 +25,14 @@ from inference.factory import POLICY_REGISTRY
 POLICY_REGISTRY.register("callable", CallablePolicy)
 POLICY_REGISTRY.register("diffusion_policy", DiffusionPolicyAdapter)
 POLICY_REGISTRY.register("dp", DiffusionPolicy)
+POLICY_REGISTRY.register("act", ACTPolicy)
 POLICY_REGISTRY.register("lerobotdp", LeRobotDiffusionPolicy)
 POLICY_REGISTRY.register("lerobot_diffusion_policy", LeRobotDiffusionPolicy)
 POLICY_REGISTRY.register("tavla", TAVLA)
 
 __all__ = [
     "CallablePolicy",
+    "ACTPolicy",
     "DiffusionPolicyAdapter",
     "DiffusionPolicy",
     "DPPolicy",

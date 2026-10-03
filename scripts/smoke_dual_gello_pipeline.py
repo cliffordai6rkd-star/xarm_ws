@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from gello_teleop.dual_gello_collect import DualGelloPipeline
 from nero_collection.arms.base import ArmState, GripperState
+from nero_collection.h5_schema import dataset_candidates
 
 
 class SimulatedArm:
@@ -82,25 +83,41 @@ def inspect_episode(path):
     with h5py.File(path) as h5:
         g = h5['teleop']
         time_us = g['timestamp_us'][:]
-        arm_count = len(g.attrs['arm_names'])
+        arm_names = [name.decode() if isinstance(name, bytes) else str(name)
+                     for name in g.attrs['arm_names']]
+        def channel(arm, name):
+            for candidate in dataset_candidates(arm, name):
+                if candidate in g:
+                    values = g[candidate][:]
+                    if candidate == name and len(arm_names) > 1:
+                        width = values.shape[1] // len(arm_names)
+                        offset = arm_names.index(arm) * width
+                        return values[:, offset:offset + width]
+                    return values
+            raise KeyError(f'{arm} channel {name!r} is missing')
         if len(time_us) < 10 or not np.all(np.diff(time_us)>0):
             raise RuntimeError('Episode needs >=10 strictly increasing state timestamps')
-        for key in ['q_cmd', 'q_follower', 'q_leader_raw', 'q_leader_mapped']:
-            if g[key].shape != (len(time_us), 7*arm_count) or not np.isfinite(g[key][:]).all():
-                raise RuntimeError(f'Invalid {key}')
-        np.testing.assert_allclose(g['delta_q'][:], g['q_cmd'][:]-g['q_follower'][:])
-        causal = g['q_cmd_send_ok'][:].astype(bool)
-        if not causal.any() or np.any(g['q_cmd_timestamp_us'][:][causal] > g['q_follower_acquired_timestamp_us'][:][causal]):
-            raise RuntimeError('Joint commands are not causal at follower acquisition')
-        valid = g['gripper_cmd_valid'][:].astype(bool)
         metadata = json.loads(h5['metadata/episode_json'][()])
-        if (not np.all(g['gripper_follower_valid'][:].any(axis=0))
-                or (metadata.get('gripper_mode') != 'trigger' and not np.all(valid.any(axis=0)))):
-            raise RuntimeError('Active gripper command and feedback channels must be present')
-        if np.any(g['gripper_cmd_timestamp_us'][:][valid] > g['q_follower_acquired_timestamp_us'][:][valid]):
-            raise RuntimeError('Gripper commands are not causal')
-        if np.any(g['gripper_cmd'][:][valid]<0) or np.any(g['gripper_cmd'][:][valid]>.085):
-            raise RuntimeError('Gripper width outside G1 interval')
+        for arm in arm_names:
+            for key in ['q_cmd', 'q_follower', 'q_leader_raw', 'q_leader_mapped']:
+                data = channel(arm, key)
+                if data.shape != (len(time_us), 7) or not np.isfinite(data[:]).all():
+                    raise RuntimeError(f'Invalid {arm} {key}')
+            np.testing.assert_allclose(channel(arm, 'delta_q')[:],
+                                       channel(arm, 'q_cmd')[:]-channel(arm, 'q_follower')[:])
+            causal = channel(arm, 'q_cmd_send_ok')[:].astype(bool)
+            acquired = channel(arm, 'q_follower_acquired_timestamp_us')[:]
+            if not causal.any() or np.any(channel(arm, 'q_cmd_timestamp_us')[:][causal] > acquired[causal]):
+                raise RuntimeError(f'{arm} joint commands are not causal at follower acquisition')
+            valid = channel(arm, 'gripper_cmd_valid')[:].astype(bool)
+            if (not channel(arm, 'gripper_follower_valid')[:].any()
+                    or (metadata.get('gripper_mode') != 'trigger' and not valid.any())):
+                raise RuntimeError(f'{arm} gripper command and feedback channels must be present')
+            if np.any(channel(arm, 'gripper_cmd_timestamp_us')[:][valid] > acquired[valid]):
+                raise RuntimeError(f'{arm} gripper commands are not causal')
+            widths = channel(arm, 'gripper_cmd')[:][valid]
+            if np.any(widths < 0) or np.any(widths > .085):
+                raise RuntimeError(f'{arm} gripper width outside G1 interval')
         cameras = {}
         for name, camera in h5.get('cameras', {}).items():
             timestamps = camera['timestamp_us'][:]
@@ -131,6 +148,7 @@ def write_simulation_config(config_path, directory, real_cameras=False):
     raw['gello_config'] = str(calibration)
     # Synthetic readers never energize motors or claim to validate haptics.
     raw['gello_damping'] = {'enabled': False}
+    raw['force_feedback'] = {'enabled': False}
     raw['torque_visualization'] = {'enabled': False}
     raw.setdefault('alignment', {}).pop('gello_hold_current_raw', None)
     for arm in raw['arms'].values():

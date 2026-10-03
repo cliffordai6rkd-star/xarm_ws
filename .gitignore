@@ -220,3 +220,5 @@ gello_teleop/identification_runs/
 # Local dual-arm camera/teleoperation episodes
 episodes/
 gello_teleop/config/episodes/
+
+/runs

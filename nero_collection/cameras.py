@@ -11,7 +11,7 @@ import subprocess
 import threading
 import time
 import traceback
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import numpy as np
@@ -643,7 +643,11 @@ def _camera_acquisition_worker(
             if frame is None:
                 stop_event.wait(0.001)
                 continue
-            _put_latest_camera_preview(frame_queue, frame)
+            # Direct preview already delivers its full-size image to the GUI.
+            # Keep that image out of collector IPC; recording needs only the
+            # configured policy image and depth, with their original timestamp.
+            collector_frame = replace(frame, preview_frame=None) if preview_queue is not None else frame
+            _put_latest_camera_preview(frame_queue, collector_frame)
             if preview_queue is not None:
                 _put_latest_camera_preview(preview_queue, frame)
     except BaseException as exc:

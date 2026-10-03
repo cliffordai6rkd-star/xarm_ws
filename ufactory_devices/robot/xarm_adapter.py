@@ -263,6 +263,12 @@ class XArmAdapter:
         self._check_result(self._call("set_state", 4, required=False), "set_state")
         self._enabled = False
 
+    def stop_motion(self) -> None:
+        """Stop servo targets while keeping motors powered; never clear faults."""
+        self._require_arm()
+        self._require_execution("stop_motion")
+        self._check_result(self._call("set_state", 4, required=True), "set_state")
+
     def set_leader_mode(self) -> None:
         self._configured_role = "leader"
 
@@ -289,10 +295,20 @@ class XArmAdapter:
         if self._first_read_wall is None:
             self._first_read_wall = read_wall
         self._last_read_wall = read_wall
-        q, q_timestamp_us = self._read_q(arm)
+        signal = str(self.config.config_kwargs.get("feedback_signal", "none")).lower()
+        report = self._call("get_joint_states", is_radian=True, num=2 if signal == 'none' else 3, required=False)
+        report_timestamp_us = now_us()
+        # One controller reply provides coherent q/dq/effort and avoids a
+        # separate angle request on every 100 Hz state refresh. Older SDKs or
+        # incomplete replies retain the checked angle-read fallback.
+        q = _extract_joint_state_component(report, 0, self.dof)
+        if q is None:
+            q, q_timestamp_us = self._read_q(arm)
+        else:
+            q_timestamp_us = report_timestamp_us
         timestamp_us = q_timestamp_us or acquired_us
         dt = None if self._last_t is None else max(time.monotonic() - self._last_t, 1.0e-6)
-        dq, torque, current, measured = self._read_feedback(arm, q, dt)
+        dq, torque, current, measured = self._read_feedback(report, q, dt)
         self._feedback_available = measured
         self._feedback_updates += 1
         if self._last_feedback_timestamp_us == timestamp_us:
@@ -471,7 +487,10 @@ class XArmAdapter:
         if self._gripper is None:
             self.init_gripper()
         raw = float(value) if mode in {"raw", "raw_position"} else self._width_to_raw(float(value))
-        self._check_result(self._call("set_gripper_position", int(round(raw)), wait=False, required=True), "set_gripper_position")
+        # SDK wait=False only skips waiting for the gripper. wait_motion=False
+        # also skips waiting for arm motion while holding the shared I/O lock.
+        self._check_result(self._call("set_gripper_position", int(round(raw)), wait=False,
+                                     wait_motion=False, required=True), "set_gripper_position")
 
     def _read_q(self, arm: Any) -> tuple[np.ndarray, int]:
         result = self._call("get_servo_angle", is_radian=True, required=True)
@@ -480,10 +499,8 @@ class XArmAdapter:
             raise RuntimeError(f"xArm {self.name} returned an invalid joint-angle report: {result!r}")
         return values, now_us()
 
-    def _read_feedback(self, arm: Any, q: np.ndarray, dt: float | None) -> tuple[np.ndarray, np.ndarray, np.ndarray, bool]:
-        del q
+    def _read_feedback(self, report: Any, q: np.ndarray, dt: float | None) -> tuple[np.ndarray, np.ndarray, np.ndarray, bool]:
         signal = str(self.config.config_kwargs.get("feedback_signal", "none")).lower()
-        report = self._call("get_joint_states", is_radian=True, num=2 if signal == 'none' else 3, required=False)
         # Public xArm SDK format is (code, [position, velocity, effort]).
         # ``effort`` is selected by set_report_tau_or_i(): it is either a
         # torque report or a motor-current report, never both at once.
@@ -498,7 +515,7 @@ class XArmAdapter:
             velocity = np.zeros(self.dof, dtype=np.float64)
             source = str(self.config.config_kwargs.get("velocity_source", "hardware")).lower()
             if source == "position_difference" and dt is not None and self._last_q is not None:
-                velocity = (self._read_q(arm)[0] - self._last_q) / dt
+                velocity = (q - self._last_q) / dt
                 self._velocity_valid = True
             elif source not in {"hardware", "position_difference"}:
                 raise ValueError("velocity_source must be hardware or position_difference")
@@ -510,14 +527,16 @@ class XArmAdapter:
 
     def _read_ee_pose(self, arm: Any) -> np.ndarray:
         result = self._call("get_position_aa", is_radian=True, required=False)
+        axis_angle = result is not None
         if result is None:
             result = self._call("get_position", is_radian=True, required=True)
+        self._check_result(result, "get_position_aa" if axis_angle else "get_position")
         pose = _extract_vector(result, 6)
         if pose is None:
             raise RuntimeError(f"xArm {self.name} returned an invalid end-effector report: {result!r}")
         pose = pose.astype(np.float64, copy=True)
         pose[:3] *= 1.0e-3
-        return pose6_to_matrix(pose)
+        return _axis_angle_pose_to_matrix(pose) if axis_angle else pose6_to_matrix(pose)
 
     def _call(self, name: str, *args: Any, required: bool = False, **kwargs: Any) -> Any:
         with self._io_lock:
@@ -632,6 +651,25 @@ class XArmAdapter:
         code = XArmAdapter._result_code(result)
         if code != 0:
             raise RuntimeError(f"xArm {operation} failed with code {code}")
+
+
+def _axis_angle_pose_to_matrix(pose: np.ndarray) -> np.ndarray:
+    """Convert metre position and SDK rotation-vector radians to base-to-TCP.
+
+    ``get_position_aa`` returns the rotation axis multiplied by its angle,
+    whereas ``get_position`` returns roll/pitch/yaw. Sinc coefficients keep
+    Rodrigues' formula well defined at zero and accurate for tiny rotations.
+    """
+    transform = np.eye(4, dtype=np.float64)
+    transform[:3, 3] = pose[:3]
+    vector = pose[3:6]
+    angle = float(np.linalg.norm(vector))
+    x, y, z = vector
+    skew = np.array([[0., -z, y], [z, 0., -x], [-y, x, 0.]], dtype=np.float64)
+    first = float(np.sinc(angle / np.pi))
+    second = .5 * float(np.sinc(angle / (2. * np.pi))) ** 2
+    transform[:3, :3] += first * skew + second * (skew @ skew)
+    return transform
 
 
 def _extract_vector(value: Any, length: int) -> np.ndarray | None:

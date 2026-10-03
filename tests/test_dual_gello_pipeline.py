@@ -460,6 +460,30 @@ def test_gripper_command_fault_stops_all_control(tmp_path):
         pipeline.close()
 
 
+@pytest.mark.parametrize('stopped, reader_error, expected', [
+    (True, 'Dynamixel 2 response failed (code=-3002)', 'GELLO I/O failed'),
+    (True, None, 'Gripper I/O failed'),
+    (False, 'Dynamixel 2 response failed (code=-3002)', 'Gripper I/O failed'),
+])
+def test_poll_preserves_gello_failure_when_gripper_target_expires(monkeypatch, stopped, reader_error, expected):
+    from types import SimpleNamespace
+    pipeline = make_pipeline()
+    for method in ('_consume_samples', '_poll_gripper_press_status',
+                   '_poll_reference_save', '_poll_episode_saves'):
+        monkeypatch.setattr(pipeline, method, lambda: None)
+    pipeline.producers = [SimpleNamespace(last_error=reader_error)]
+    pipeline.gripper_workers = [SimpleNamespace(error=RuntimeError('GELLO gripper target expired or unavailable'))]
+    monkeypatch.setattr(pipeline, 'leader_sample_status', lambda: {'right': {'last_error': reader_error}})
+    if stopped:
+        pipeline.stop_event.set()
+    with pytest.raises(RuntimeError, match=expected) as raised:
+        pipeline.poll()
+    if expected == 'GELLO I/O failed':
+        assert reader_error in str(raised.value)
+    else:
+        assert raised.value.__cause__ is pipeline.gripper_workers[0].error
+
+
 def test_damping_current_is_signed_filtered_and_limited_without_nm_claim():
     cfg = type("Damping", (), {
         "damping_gain": (2.0, 2.0), "damping_brake_gain": (1.0, 1.0),
@@ -561,7 +585,7 @@ def test_collection_damping_overrides_both_sides_without_changing_calibration(tm
     pipeline = DualGelloPipeline(path)
     left, right = [leader for _, _, leader in pipeline.configs]
     assert left.damping_enabled and right.damping_enabled
-    assert left.fps == right.fps == 30
+    assert left.fps == right.fps == original['sample_rate_hz']
     assert left.damping_gain == [8]*7 and right.damping_gain == [4]*7
     assert not left.weak_hold_enabled
     assert open(calibration_path).read() == before
@@ -1277,19 +1301,21 @@ def test_gripper_absolute_opening_is_repeatable_and_releases_back_to_open():
 
 
 @pytest.mark.parametrize('stop_key', [' ', '\r', '\n'])
-def test_interactive_recording_r_starts_and_enter_or_space_stops(stop_key, capsys):
+def test_interactive_recording_r_starts_and_enter_or_space_then_y_stops(stop_key, capsys):
     from unittest.mock import Mock, patch
     pipeline = DualGelloPipeline.__new__(DualGelloPipeline)
     pipeline.state = 'following'
     pipeline.recording = False
+    frozen = Mock()
+    pipeline.buffer = frozen
     for name in ('reset', 'wait_for_alignment', 'takeover', 'poll'):
         setattr(pipeline, name, Mock())
     def start():
         pipeline.recording = True
         pipeline.state = 'recording'
     def stop(save, index, *, background=False):
-        assert save is True and pipeline.recording
-        assert background
+        assert save is False and pipeline.recording
+        assert not background
         pipeline.recording = False
         pipeline.state = 'following'
         return None
@@ -1301,19 +1327,21 @@ def test_interactive_recording_r_starts_and_enter_or_space_stops(stop_key, capsy
         pipeline.state = 'recording'
     pipeline.start_episode = Mock(side_effect=start)
     pipeline.stop_episode = Mock(side_effect=stop)
+    pipeline._save_frozen_episode = Mock()
     pipeline.freeze_following = Mock(side_effect=hold)
     pipeline.reset_and_hold = Mock(side_effect=hold)
     pipeline.realign_and_takeover = Mock(side_effect=takeover)
-    keys = Mock(is_tty=True); keys.read_key.side_effect = ['r', 'F', 'o', 't', stop_key, 'q']
+    keys = Mock(is_tty=True); keys.read_key.side_effect = ['r', 'F', 'o', 't', stop_key, 'y', 'q']
     context = Mock(); context.__enter__ = Mock(return_value=keys); context.__exit__ = Mock(return_value=False)
     with patch('gello_teleop.dual_gello_collect.TerminalKeys', return_value=context):
         assert pipeline.interactive() == 0
     pipeline.start_episode.assert_called_once()
-    pipeline.stop_episode.assert_called_once_with(True, None, background=True)
+    pipeline.stop_episode.assert_called_once_with(False, None)
+    pipeline._save_frozen_episode.assert_called_once_with(frozen, background=True)
     pipeline.freeze_following.assert_called_once()
     pipeline.reset_and_hold.assert_called_once_with(keys)
     pipeline.realign_and_takeover.assert_called_once_with(keys)
-    assert '停止录制，正在保存 episode' in capsys.readouterr().out
+    assert '正在保存 episode' in capsys.readouterr().out
 
 
 @pytest.mark.parametrize('stop_key', [' ', '\r', '\n'])
@@ -1384,13 +1412,13 @@ def test_recording_keys_are_processed_inside_alignment_wait():
         time.sleep(.03); pipeline.poll()
         pipeline.freeze_following()
         first_buffer = pipeline.buffer
-        first_buffer.save = Mock(return_value='episode.h5')
-        pipeline.alignment['alignment_samples'] = 3
-        keys = SimpleNamespace(read_key=Mock(side_effect=[' ', 'r', None]))
+        pipeline.episode_save_process.save = Mock(return_value='episode.h5')
+        pipeline.alignment['alignment_samples'] = 4
+        keys = SimpleNamespace(read_key=Mock(side_effect=[' ', 'y', 'r', None]))
         pipeline.wait_for_alignment(keys)
         for future, target in pipeline.pending_episode_saves:
             future.result(timeout=2.)
-        first_buffer.save.assert_called_once()
+        pipeline.episode_save_process.save.assert_called_once()
         assert first_buffer.episode_metadata['recorded_sample_count'] > 0
         assert pipeline.recording and pipeline.buffer is not first_buffer
         assert pipeline.state == 'aligned' and pipeline.follow_stop.is_set()

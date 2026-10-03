@@ -443,10 +443,17 @@ python -m gello_teleop.dual_gello_collect \
 `reset_q`、GELLO 电流位置插值对齐、恢复阻尼并自动采样核对、全部通过后接管。
 取消人手微调等待：`alignment_samples` 指定核对次数，任一次误差超过
 `alignment_tolerance_rad` 或采样失败都立即报错停止接管。
-终端 `r` 开始新的 episode，Enter 或空格停止录制并自动保存；遥操状态保持不变。
-收到停止键立即打印“停止录制”，保存日志包含 episode 长度（秒）、样本数和绝对保存路径。
-停止后由独立线程保存已冻结的 episode，终端、遥操和相机预览继续运行，可按 `r`
-录制下一集；保存队列按顺序写入并预留不同 episode 编号。退出时先停止并关闭设备，
+终端 `r` 开始新的 episode，Enter 或空格结束本集采样并提示输入 `y/n`：
+`y` 保存、`n` 丢弃当前 episode，大小写均可。等待确认时遥操继续，
+输入 `y/n` 即生效，无需再次按 Enter；`F/o/t/q` 仍可使用。
+保存日志包含 episode 长度（秒）、样本数和绝对保存路径。
+停止后由传输线程分块发送已冻结的 episode，H5 数组整理、写入和工作副本释放在
+独立进程执行，减少保存期间与控制线程争用 Python GIL。每块最多 1024 行或
+256 KiB（单张图像超过该大小时按一张发送），不会一次序列化整个 episode。
+实机连接前预启动保存进程，日志打印其 PID；H5 元数据中的 `writer_process_id` 和
+`collector_process_id` 可以核对写入与采集确实在不同进程。
+终端、遥操和相机预览继续运行，可按 `r` 录制下一集；保存队列按顺序写入并
+预留不同 episode 编号。退出时先停止并关闭设备，
 再等待已提交的保存任务完成。保存失败会报出目标路径并保留失败任务的内存数据。
 当前未录制时按 Enter 或空格也会打印提示。键盘操作需在启动程序的终端进行。
 相机按 `fps: 30` 采集，RGB 和对齐深度在采集进程内按 `output_size: [224, 224]`
@@ -455,7 +462,15 @@ python -m gello_teleop.dual_gello_collect \
 保存按小批次写入，日志报告每路相机的帧数、进度和最终写入耗时。
 关节数据按 `control.sample_rate_hz: 100` 保存；相机使用独立的 30 Hz 时间戳，
 不复制图像以匹配关节数据行数。预览尺寸可独立由 `preview_output_size` 设置。
-`control.maximum_lateness_s` 对运动控制线程保持严格超时检查。
+`control.deadline_policy: skip` 让运动控制线程在延迟后跳过过期时刻，
+按主机单调时钟使用最新有效主手目标和从臂状态继续下发，不补发历史指令。
+平滑位置参考使用真实经过的时间更新，仍受已有步长、速度和加速度限制。
+采集配置启用 `skip`；省略该设置或设为 `strict` 时，控制延迟超过
+`control.maximum_lateness_s` 仍会停止。`skip` 模式下该值作为警告阈值。
+H5 元数据中的 `control_late_tick_count`、`control_skipped_tick_count` 和
+`control_max_lateness_s` 记录运动控制调度间隙。
+这项设置不处理串口坏包或回包超时；主手/从臂反馈过期、GELLO 读写失败或
+xArm 控制器故障仍会停止。时间戳用于主机调度及记录，接口不向 xArm 下发未来执行时间。
 独立录制线程超过该阈值时打印警告，跳过过期时刻后继续采样，不补造样本。
 每行的采样延迟及 H5 元数据中的 `sampling_late_tick_count`、
 `sampling_skipped_tick_count`、`sampling_max_lateness_s` 可用于检查会话内的调度间隙。
@@ -493,12 +508,17 @@ Bio Gripper G2 的 TCP 负载质量、质心和机械臂安装方向仍需与实
 触发 C31 时停止发送运动指令，日志同时报告侧别、控制器 C31 和 SDK 返回码，
 不自动清错、复位或重新使能；处理故障后需重新启动并对齐接管。
 
-数采配置默认开启 **七轴实测 / URDF 理论力矩对比图**。
-每行对应 J1～J7，单位 Nm；单臂七行两列，双臂七行四列：左臂实测、左臂理论、
-右臂实测、右臂理论。同一关节的实测 / 理论两列使用相同纵轴范围。
+数采配置默认开启 **URDF 外力矩 L1 范数和七轴曲线图**。
+每个启用臂显示一列八张曲线：上方为 `tau_ext_l1 = ||tau_ext||₁`，
+下方依次为 J1～J7 的 `tau_ext`，单位均为 Nm。
+`active_arms: [left, right]` 时左右臂并排，单臂配置只显示所选臂的一列；
+`--left/--right/--both` 覆盖配置后，窗口也跟随实际选择。
+七轴曲线复用实际用于 GELLO 反馈的滑动均值残差，范数为这些值的绝对值之和，
+取值位于阈值、增益和电流限幅之前。窗口未满、暂停或数据无效/过期时显示断线和 `-- Nm`。
+`force_feedback.source: checkpoint` 保留原有七轴网络 / URDF 残差对比布局。
 窗口在连接检查时启动，启动复位和 GELLO 对齐期间也更新，
 未录制以及 `F/t/o` 期间持续运行；关窗或窗口内按 q/Esc 只关闭绘图。
-动力学计算和 GUI 在独立进程，通过有界非阻塞队列接收位置、速度、加速度和实测力矩，
+GUI 在独立进程，通过有界非阻塞队列接收状态和已完成的反馈计算结果，
 队列满时丢弃绘图样本，不阻塞控制或 H5 采样。图中不额外标注模型参数或近似说明。
 
 可用 `--left`、`--right`、`--both` 覆盖 YAML 的 `active_arms`，例如：
@@ -514,22 +534,77 @@ python -m gello_teleop.dual_gello_collect \
 兼容字段 `arm: left/right` 都不会按机械臂选择过滤相机。
 GELLO 底层串口断连会报出侧别、串口路径、电机 ID 和操作，停止当次采集。
 
-模型列直接调用 Pinocchio `rnea(q, dq, ddq_filtered)`，计算
+遇到 `code=-3001`（`COMM_RX_TIMEOUT`），表示当前读取没有收到完整回包；
+`code=-3002`（`COMM_RX_CORRUPT`）可能是 CRC 错误，也可能是收到
+不完整回包后超时，不能仅凭 ID 判断电机损坏。停止数采及其他 GELLO 程序后运行：
+
+```bash
+python -m gello_teleop.diagnose_gello_serial \
+  -c gello_teleop/config/xarm7_gello_dual_dataset.yaml --side right \
+  --samples 600 --rate-hz 10 --output /tmp/gello_right_serial.json
+```
+
+该工具只读位置和 Goal Current，不使能力矩、不写目标、不连接 xArm。
+输出耗时分位数、跳过的采样时刻、USB 延迟、失败 ID/寄存器和坏包原始字节，
+区分无回包、不完整包与完整坏包；`--position-only` 可单独测试位置读取。
+无负载只读测试通过不能排除启用电流后的供电压降、接插件接触不良或干扰。
+若复发，优先检查报错 ID 及其前后级连接、电源和 USB 线缆。
+
+57600 baud、8 个位置反馈和 7 个电流写入/回读，单轮仅线路传输至少约
+50.2 ms，另有电机回包延迟和 USB/线程调度开销，20 Hz 无通信余量。
+当前采集配置的 `gello_damping.sample_rate_hz` 为 10 Hz，并覆盖标定文件的
+`fps`；右侧通过 `gello_damping.sides.right.sample_rate_hz` 设为 12 Hz，
+用于 USB `latency_timer=1` 的总线。xArm 控制和录制仍为 100 Hz。
+主手一轮读写超过周期时，下一轮立即读取新的位置并重新安排周期，避免额外空等
+一个周期；不会积压或补发过去的请求。控制和录制线程仍跳过过期时刻。
+`leader_sample_status()` 的 `skipped_ticks` 显示跳过次数，失败时的
+`read_ms` 显示最近一次位置读取耗时，`io_ms` 显示最近一次结束的整轮耗时；
+`io_stage` 和 `in_flight_ms` 显示当前阶段及本轮已用时间。
+坏包仍触发原有停止和释放阻尼流程。
+
+有效的位置读完后立即供控制和夹爪线程使用，保持读取时的原始时间戳；
+阻尼电流写入与回读随后完成。写入或回读失败仍立即停止并撤销当前主手目标，
+启动接管仍要求连续完成读写校验。`leader_max_age_s: 0.15` 保持不变。
+`read_ms` 与 `io_ms` 在读取进行中可能来自不同轮次，应结合 I/O 阶段判断。
+启用独立相机预览时，采集进程只接收保存尺寸的图像和深度，原始预览图直接
+送往预览进程，减少图像传输与反序列化对采样的影响。
+
+GELLO 串口在没有数据时最多等待 1 ms，让出 CPU，已有字节立即读取；
+SDK 回包超时使用单调时钟，保留完整包、CRC、电机错误和 Goal Current 回读校验。
+Linux 的 USB `latency_timer=1` 减少驱动缓冲延迟；SDK 内的超时裕量不等于
+每次读取的固定等待时间，不能仅因 USB 已设为 1 ms 就压缩回包期限。
+xArm 状态优先从同一次 `get_joint_states` 回复取得 q、dq 和所选 effort，
+然后读取末端位姿，将每轮状态查询由 3 次减少到 2 次；旧 SDK 或无效位置回复
+仍回退到角度查询。遥操夹爪指令同时设置 `wait=False` 和 `wait_motion=False`，
+避免额外等待机械臂动作占用共享通讯锁。
+
+URDF 反馈调用 Pinocchio `rnea(q, dq, ddq_filtered)`，计算
 `tau_model = M(q)ddq_filtered + C(q,dq)dq + g(q)`。
 单位为 rad、rad/s、rad/s² 和 Nm。加速度来自采集状态 `ddq`（xArm 适配器对速度反馈差分），
 先按 `acceleration_cutoff_hz` 做一阶低通，再送入 RNEA；RNEA 输出不再做力矩低通，
 也不再通过动量观测器计算。静止时输出重力力矩 `g(q)`。
 算法说明见 [Pinocchio 官方 RNEA 文档](https://github.com/stack-of-tasks/pinocchio/blob/devel/doc/a-features/g-dynamic.md)。
 
-实测列显示一阶低通后的 SDK 力矩，截止频率为 `measured_torque_cutoff_hz`。
+`tau_ext_cal` 使用一阶低通后的 SDK 实测力矩减去上述 RNEA 力矩，
+随后逐轴取滑动均值得到 `tau_ext`，图中展示这七轴值和对应的 L1 范数。
+URDF 模式的滤波参数和均值窗口使用 `force_feedback` 配置，绘图不重复计算 RNEA 或滤波。
+实测力矩截止频率为 `measured_torque_cutoff_hz`。
 两项截止频率独立，默认均为 3 Hz（时间常数约 53 ms），支持标量或 J1..J7 七元素数组，
 可在 `sides.left/right` 分别覆盖。滤波使用实际反馈时间间隔 `dt`：
 `alpha = 1-exp(-2*pi*cutoff_hz*dt)`，`filtered = previous+alpha*(raw-previous)`。
 首个有效样本直接初始化，避免从零开始的过渡；重复样本不更新滤波状态。
-反馈缺失、无效或间隔超过 `stale_s` 时显示断线并重置对应滤波器。
-位置、速度或加速度不可用时不计算完整 RNEA，模型显示 `-- Nm`；实测力矩无效时实测列同样留空。
+反馈缺失、无效或间隔超过有效期时显示断线并重置计算状态。
+位置、速度、加速度或实测力矩不可用时，范数显示 `-- Nm`。
 不能将空图上的零轴视为计算结果。示例配置的 `arms.<side>.feedback_signal: torque`
-明确选择 SDK 力矩报告字段，而非电流。实测值只用于绘图和记录，不送入力矩控制或主手反馈。
+明确选择 SDK 力矩报告字段，而非电流。URDF 残差同时用于主手反馈和范数绘图。
+
+切换为 `source: checkpoint` 时，`tau_ext_pred` 复用 `force_feedback` 的异步预测，
+不在绘图进程重复加载网络；另一列独立计算 URDF 残差。
+实测力矩来自同一次推理的 `tau_measured`，其滤波方式由
+`force_feedback.measured_tau_filter` 决定；当前 `checkpoint` 对应训练目标的 10 Hz 低通。
+网络列按推理源状态时间戳绘制，不用最新实测值减去较早的预测。
+它显示阈值判断、增益、电流限幅之前的完整残差，可用于观察空载误差和接触信号。
+网络关闭、历史不足、暂停、结果无效或过期时显示断线和 `-- Nm`；URDF 列独立更新。
 
 首次使用需在数采 Python 环境安装 `matplotlib>=3.7` 和 `pin>=3,<4`，并使用可用的 GUI 后端。
 无桌面运行时加 `--no-torque-plot`；也可用 `--torque-plot` 覆盖配置开启。
@@ -574,8 +649,10 @@ SDK 未报告正质量时，模型仅包含裸臂。负载变化时重置观测�
 也可在 `sides.left/right.payload` 显式设置 `mass_kg`、`com_m`（法兰坐标系）和可选的
 `inertia_kg_m2`（质心处 3×3 矩阵），或用包含完整固定末端惯量的 URDF 并关闭附加 payload，
 避免重复计入。活动关节必须保持 `joint1..joint7` 顺序。
-模型不包含摩擦、电机偏置或未知末端相机负载。这些图仅用于实时查看。
-这两项滤波用于可视化。H5 保留原始实测力矩；读取失败时以 NaN 和有效性标记保存。
+模型不包含摩擦、电机偏置或未知末端相机负载。
+`torque_visualization` 的两项滤波用于网络模式下的独立 URDF 对比列。
+当前 URDF 模式的曲线复用反馈结果；H5 外力矩结果只保存 `<side>_tau_ext_l1_xarm`，
+读取失败时以 NaN 和有效性标记保存。
 离线验证布局可使用模拟运动，不连接硬件：
 
 ```bash
@@ -679,13 +756,131 @@ xArm 控制线程使用 monotonic 100 Hz tick；GELLO 按各自 `fps` 在独立�
 `ddq_ref = clip(kp*(q_target-q_ref)-kd*dq_ref)`，再按真实 dt 积分并限幅。`kp/kd`
 是参考轨迹参数，不是电机刚度或 MIT 力矩参数。
 
-每条 HDF5 状态行按 `left,right` 拼接，包含 `q_follower`、上一条成功下发的
-`q_cmd`、`delta_q`、`dq_follower`、`ddq_follower`、GELLO 原始/映射角、xArm
-反馈力矩/电流及有效性、数据年龄、序号和命令时间。相机保存在
+GELLO/xArm 的 HDF5 每臂字段统一使用 `侧别_量_设备`，例如
+`left_q_xarm`、`left_q_gello`、`right_q_xarm`、`right_q_gello`。
+七轴数据为 `(N,7)`，不拼成 `(N,14)`；设备名始终放在最后。
+新采集的 H5 固定包含左右臂各五个必需字段：`q_xarm`、`dq_xarm`、`tau_xarm`、
+`q_cmd_xarm`、`tau_ext_l1_xarm`。关节量为 `(N,7)`，范数为 `(N,1)`。
+同时保存左臂 `left_q_eepose_xarm` 和右臂 `right_eepose_xarm`，名称保留上述写法。
+两者均为 `(N,4,4)` 基座到 TCP 的齐次变换矩阵：左上角 `[:3,:3]` 为旋转矩阵，
+`[:3,3]` 为平移，单位米。位姿直接来自现有 xArm 状态，不增加 SDK 通信请求。
+单臂运行时，另一侧必需字段保存 NaN，标记 `placeholder=true` 并引用全零有效性字段；
+`arm_names` / `recorded_arm_names` 只列出实际采集的臂，`schema_arm_names` 列出左右两侧。
+外力矩反馈关闭时，范数字段同样保留为 NaN 并标记无效。
+下表用右臂示例；除单独列出的末端位姿名称外，左臂将 `right_` 换成 `left_`。
+所有字段均位于 `teleop` 组。
+
+| 数据 | H5 字段 |
+| --- | --- |
+| xArm 实测关节角、速度、加速度 | `right_q_xarm`、`right_dq_xarm`、`right_ddq_xarm` |
+| xArm 原始加速度 | `right_ddq_raw_xarm` |
+| GELLO 映射角、原始角 | `right_q_gello`、`right_q_raw_gello` |
+| xArm 实测力矩、电流 | `right_tau_xarm`、`right_current_xarm` |
+| xArm 末端位姿（左、右） | `left_q_eepose_xarm`、`right_eepose_xarm` |
+| xArm 末端位姿有效性（左、右） | `left_eepose_valid_xarm`、`right_eepose_valid_xarm` |
+| xArm 关节目标、跟踪误差 | `right_q_cmd_xarm`、`right_delta_q_xarm` |
+| GELLO 反馈电流、总目标电流 | `right_current_feedback_gello`、`right_current_cmd_gello` |
+| 夹爪实测、目标、主手闭合比例 | `right_gripper_xarm`、`right_gripper_cmd_xarm`、`right_gripper_fraction_gello` |
+| 关节有效性、反馈时间戳、数据年龄 | `right_q_valid_xarm`、`right_q_timestamp_us_xarm`、`right_q_age_us_xarm` |
+| GELLO 有效性、采样序号 | `right_q_valid_gello`、`right_q_sequence_gello` |
+| 外力矩反馈基准、同源实测力矩 | `right_tau_urdf_xarm`、`right_tau_feedback_measured_xarm` |
+| 外力矩七轴 L1 范数 | `right_tau_ext_l1_xarm` |
+
+各臂有效性、数据年龄、序号、命令时间和夹爪字段为 `(N,1)`；
+设备名始终放在最后，便于按侧别、量和设备筛选。
+关节目标统一写作 `left_q_cmd_xarm` / `right_q_cmd_xarm`。
+末端位姿缺失、非有限数值或来源状态过期时，对应 `eepose_valid_xarm` 为 0；
+未启用的一侧保留 NaN 位姿。`required_eepose_datasets` 列出两个位姿字段，
+`source_timestamp_path` 指向已保存的状态采集时间戳。读取端兼容旧 `ee_pose_xarm` 名称。
+公共采样时间保存在 `teleop/timestamp_us`，公共采样延迟和模型调度字段不加臂前缀。
+相机保存在
 `cameras/<name>/frames` 和独立 `timestamp_us`，不会复制到 100 Hz。GELLO 过期、
 控制异常或两侧任一命令失败时，两个从臂停止接收新目标。
 配置 `gripper.enabled: true` 后会由各自状态线程读取夹爪宽度；未启用或 SDK 不提供
-夹爪反馈时保存 NaN 和 `gripper_follower_valid=0`，不会用零值冒充状态。
+夹爪反馈时保存 NaN 和 `<side>_gripper_valid_xarm=0`，不会用零值冒充状态。
+
+旧 H5 的 `q_follower` / `q_leader_mapped` 或带侧别的旧字段仍可读取。
+已有文件可用迁移脚本统一名称，先预览更名计划，再执行原地转换：
+
+```bash
+python scripts/migrate_h5_device_schema.py runs/earae_board_1003
+python scripts/migrate_h5_device_schema.py runs/earae_board_1003 --in-place
+```
+
+转换只更正文件内已有字段的名称及引用，例如旧右臂范数
+`right_tau_ext_l1` 更正为 `right_tau_ext_l1_xarm`，保留数值、形状、压缩设置、时间戳及相机图像。
+历史单右臂文件继续只保留实际右臂字段。读取端兼容旧范数名称。
+迁移记录保存在文件的 `metadata` 中，可用同一脚本的 `--in-place --undo` 恢复旧名称。
+
+### URDF 外力矩反馈与滑动均值
+
+`config/xarm7_gello_dual_dataset.yaml` 当前使用 `force_feedback.source: urdf`，
+以 xArm 的实测状态和 `models/xarm7_dynamics.urdf` 计算反馈。
+保持原有采集命令和 `r/s/f/t/o/q` 操作；`enabled: false` 可关闭外力矩反馈。
+URDF 模式使用 Pinocchio，不加载神经网络权重或使用 CUDA，关闭力矩窗口也能反馈。
+
+```text
+tau_m = lowpass(measured torque)
+tau_urdf = RNEA(q, dq, lowpass(ddq))
+tau_ext_cal = tau_m - tau_urdf
+tau_ext = moving_mean(tau_ext_cal, tau_ext_mean_window)
+tau_ext_l1 = sum(abs(tau_ext[J1..J7]))  # H5 外力矩结果只保存这一标量；可视化同时显示七轴 tau_ext
+feedback = gain_raw_per_nm * tau_ext * sign   if abs(tau_ext) > threshold_nm
+feedback = 0                                otherwise
+GELLO 电流 = 限幅(阻尼电流 + joint_signs * 限幅(feedback))
+```
+
+`q`、`dq`、`ddq` 来自 xArm 实测状态，单位为 rad、rad/s、rad/s²；
+RNEA 包含惯性、科氏/离心与重力项，结果为 Nm。
+实测力矩和加速度各使用独立的一阶低通，当前截止频率均为 3 Hz。
+模型在机械臂使能前加载，计算通过有界队列和独立线程完成，不阻塞控制或串口线程。
+`payload.source: controller` 复用 SDK 缓存中的 Studio 负载质量和法兰系质心，
+不增加硬件查询；负载缓存尚不可用时释放反馈。也可设置静态 `mass_kg`、`com_m`
+及可选 `inertia_kg_m2`，或用空 `payload` 使用无附加负载的 URDF。
+
+滑动窗口按不同时间戳的有效 xArm 状态计数，不重复计入 100 Hz 采样线程重用的状态。
+将 `force_feedback.tau_ext_mean_window` 改成正整数即可调整，
+`1` 表示直接使用当前残差。收集满窗口后才启用反馈。
+窗口越大，曲线越平滑，同时会增加反馈延迟。
+暂停、无效/过期数据、采样间断、时间倒退或负载变化时清空窗口，
+恢复后重新收集满窗口；低于阈值时立即释放反馈，保留正常阻尼。
+
+| 配置量 | 作用 |
+| --- | --- |
+| `source` | `urdf` 使用刚体动力学；`checkpoint` 保留原有网络模式 |
+| `urdf_path` / `gravity_m_s2` | 七轴 URDF 与基座系重力向量；相对路径以配置文件目录为准 |
+| `measured_torque_cutoff_hz` / `acceleration_cutoff_hz` | 实测力矩和 RNEA 输入加速度的截止频率 |
+| `tau_ext_mean_window` | 残差滑动均值窗口，正整数，按不同有效状态计数 |
+| `payload` | 控制器缓存负载或静态法兰系负载 |
+| `threshold_nm` | 对平均后的残差取绝对值判断，超过后反馈完整残差 |
+| `gain_raw_per_nm` / `sign` | 反馈强度与方向，另行应用 GELLO 标定 `joint_signs` |
+| `current_limit_percent` | XL330 最大原始电流 1750 的百分比，范围 0～100 |
+| `ramp_s` / `rate_limit_raw_s` | 有效反馈恢复时的渐入和电流上升变化率 |
+| `maximum_age_s` / `maximum_sample_gap_s` | 源状态有效期及清空窗口的状态间隔上限 |
+
+J1..J7 数组可逐轴设置；在 `force_feedback.sides.left` / `right` 中可覆盖模型、
+负载、滤波、窗口、阈值及电流参数。`source` 为全局选择。
+电流反馈与阻尼相加后仍受 `gello_damping.damping_current_limit` 限制。
+旧配置的整数 `current_limit_raw` 继续兼容，同一配置层不可同时填写两种上限。
+
+H5 的外力矩结果只保存平均后残差的七轴 L1 范数，字段固定为
+`teleop/left_tau_ext_l1_xarm` 和 `teleop/right_tau_ext_l1_xarm`，均为 `(N,1)`。
+新文件固定包含这两个范数字段，未采集的一侧保存 NaN 并标记无效。
+不写入 `tau_ext`、`tau_ext_cal` 或 `tau_ext_raw` 七轴外力矩数组。
+有效零力矩保存 0，窗口未满、暂停或结果失效时保存 NaN；有效性和源时间戳
+分别引用同侧 `<side>_tau_free_valid_xarm`、`<side>_tau_free_source_timestamp_us_xarm`。
+原有 `<side>_tau_urdf_xarm`、同源 `<side>_tau_feedback_measured_xarm`、
+关节状态、相机和 GELLO 电流字段继续保存。
+`<side>_tau_free_pred_xarm` 是所选基准力矩的兼容字段，在 URDF 模式等于
+`<side>_tau_urdf_xarm`；`tau_free_*` 时间戳和有效性也按相同格式保存。
+元数据记录 URDF 来源、范数阶数、七轴数量、滤波和均值窗口。
+计算顺序是逐轴滑动均值后取 L1 范数；先取范数再求均值会得到不同结果。
+可视化使用同一份残差和源状态时间戳，只展示每臂一条范数曲线。
+
+如需原网络模式，设置 `source: checkpoint`、`checkpoint_path`、`device`，
+以及 `measured_tau_filter: raw` 或 `checkpoint`；网络模式仍按权重恢复
+q/dq/delta_q 输入、归一化、滤波和 50 帧历史。URDF 模式不等待网络历史。
+URDF 残差也包含未建模摩擦、模型和力矩偏差，应结合现有阈值与实机状态调参。
 
 ### GELLO 阻尼
 
@@ -698,7 +893,7 @@ xArm 控制线程使用 monotonic 100 Hz tick；GELLO 按各自 `fps` 在独立�
 
 当前配置启用纯电流阻尼，七轴低强度初始增益 8、附加制动增益 8、电流上限 15，
 速度阈值 0.5 rad/s。所有电流参数均为舵机原始单位，不是 Nm；尚未实机调参。
-主手读写设为 30 Hz，从臂控制仍为 100 Hz。电流指令按标定符号转换回编码器方向，
+主手读写设为 15 Hz，从臂控制仍为 100 Hz。电流指令按标定符号转换回编码器方向，
 使阻力反向于主手运动。加大 `damping_gain` 增加常规阻力，
 `damping_brake_gain` 增加超过阈值后的阻力；阻尼不是硬限速。
 `damping_current_limit` 控制每轴电流上限，不能据此推断输出力矩。

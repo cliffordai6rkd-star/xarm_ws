@@ -3,15 +3,23 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-
-from inference.checkpoints import restore_checkpoint_model
-from inference.config import load_inference_config
-from inference.pipeline import _dp_model_overrides
-from inference.runtime import NeroInferenceRuntime
-from nero_collection.keyboard import TerminalKeys
+from pathlib import Path
+import yaml
 
 
-def main() -> None:
+def main(argv=None) -> None:
+    probe = argparse.ArgumentParser(add_help=False)
+    probe.add_argument("--config")
+    known, _ = probe.parse_known_args(argv)
+    if known.config and "policy" in (yaml.safe_load(Path(known.config).read_text()) or {}):
+        from inference.joint_cli import main as joint_main
+
+        return joint_main(argv)
+    from inference.checkpoints import restore_checkpoint_model
+    from inference.config import load_inference_config
+    from inference.pipeline import _dp_model_overrides
+    from inference.runtime import NeroInferenceRuntime
+    from nero_collection.keyboard import TerminalKeys
     parser = argparse.ArgumentParser(
         description="Nero DP inference with direct-q/tau and MTC control"
     )
@@ -41,7 +49,7 @@ def main() -> None:
     )
     parser.add_argument("--skip-can-setup", action="store_true")
     parser.add_argument("--log-level", default="INFO")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if not args.check and not args.run:
         args.run = True
     logging.basicConfig(

@@ -211,27 +211,123 @@ def test_cutoffs_can_be_overridden_per_arm():
 
 
 @pytest.mark.parametrize('sides', [('left',), ('right',), ('left', 'right')])
-def test_measured_theoretical_window_and_single_arm_layout(tmp_path, sides):
+def test_residual_window_and_single_arm_layout(tmp_path, sides):
     pytest.importorskip('matplotlib')
     cfg = plot_config({}, __file__, sides)
     window = TorqueWindow(cfg, {side: ConstantMassModel() for side in sides}, headless=True)
     try:
-        window.ingest({side: sample(torque=np.full(7, 5.), torque_valid=True) for side in sides}, 10.)
-        window.ingest({side: sample(10.01, torque=np.full(7, 5.), torque_valid=True) for side in sides}, 10.01)
+        for timestamp in [10., 10.01]:
+            prediction = dict(timestamp_s=timestamp, valid=True,
+                              tau_measured=np.full(7, 5.), tau_pred=np.full(7, 2.))
+            window.ingest({side: sample(timestamp, torque=np.full(7, 5.), torque_valid=True,
+                                       tau_free=prediction) for side in sides}, timestamp)
         window.draw(10.01)
         assert window.axes.shape == (7, 2*len(sides))
         for side_index, side in enumerate(sides):
             column = 2*side_index+1
             assert side.title() in window.axes[0, column].get_title()
-            assert 'theoretical' in window.axes[0, column].get_title()
+            assert 'tau_ext_cal' in window.axes[0, column].get_title()
+            assert 'tau_ext_pred' in window.axes[0, column-1].get_title()
             assert len(window.lines[0, column].get_ydata()) == 2
-            np.testing.assert_allclose(window.lines[0, column].get_ydata()[-1], 3.)
-            np.testing.assert_allclose(window.lines[0, column-1].get_ydata()[-1], 5.)
+            np.testing.assert_allclose(window.lines[0, column].get_ydata()[-1], 2.)
+            np.testing.assert_allclose(window.lines[0, column-1].get_ydata()[-1], 3.)
             assert window.axes[0, column].get_ylim() == window.axes[0, column-1].get_ylim()
         window.save(tmp_path/'torque.png')
         assert (tmp_path/'torque.png').stat().st_size > 10000
     finally:
         window.close()
+
+
+def test_async_prediction_uses_paired_measured_torque_and_source_time():
+    history = TorqueHistory(ConstantMassModel(), .15, 30.)
+    history.ingest(sample(torque=np.full(7, 5.), torque_valid=True), 10.)
+    prediction = dict(timestamp_s=9.98, valid=True,
+                      tau_measured=np.full(7, 9.), tau_pred=np.full(7, 4.))
+    # A new inference result may arrive without a new hardware state.
+    history.ingest(sample(torque=np.full(7, 99.), torque_valid=True,
+                          tau_free=prediction), 10.01)
+    assert len(history.rows) == 1
+    t, residual = history.prediction_arrays(10.01)
+    np.testing.assert_allclose(t, [-.03])
+    np.testing.assert_allclose(residual[-1], 5.)
+    _, model, measured, _ = history.arrays(10.01)
+    np.testing.assert_allclose(measured-model, 2.)
+
+
+def test_invalid_and_stale_prediction_breaks_curve_and_releases_latest_label():
+    history = TorqueHistory(ConstantMassModel(), .15, 30.)
+    def prediction(timestamp, **overrides):
+        return dict(timestamp_s=timestamp, valid=True,
+                    tau_measured=np.full(7, 5.), tau_pred=np.full(7, 2.)) | overrides
+    history.ingest(sample(tau_free=prediction(10.)), 10.)
+    history.ingest(sample(10.01, tau_free=prediction(10.)), 10.01)
+    assert len(history.prediction_rows) == 1
+    history.ingest(sample(10.02, tau_free=prediction(10.02, valid=False)), 10.02)
+    assert np.isnan(history.prediction_arrays(10.02)[1][-1]).all()
+    history.ingest(sample(10.03, tau_free=prediction(10.03)), 10.03)
+    np.testing.assert_allclose(history.prediction_arrays(10.03)[1][-1], 3.)
+    assert np.isnan(history.prediction_arrays(10.2)[1][-1]).all()
+    history.ingest(sample(10.21, tau_free=prediction(10.03)), 10.21)
+    assert np.isnan(history.prediction_arrays(10.21)[1][-1]).all()
+
+
+def test_prediction_unavailable_keeps_urdf_residual_visible():
+    pytest.importorskip('matplotlib')
+    window = TorqueWindow(plot_config({}, __file__, ['right']),
+                          {'right': ConstantMassModel()}, headless=True)
+    try:
+        window.ingest({'right': sample(torque=np.full(7, 5.), torque_valid=True)}, 10.)
+        window.draw(10.)
+        assert len(window.lines[0, 0].get_ydata()) == 0
+        assert window.labels[0, 0].get_text() == '-- Nm'
+        np.testing.assert_allclose(window.lines[0, 1].get_ydata(), [2.])
+    finally:
+        window.close()
+
+
+def test_prediction_ignores_late_result_and_recovers_after_host_clock_reversal():
+    history = TorqueHistory(ConstantMassModel(), .15, 30.)
+    def predicted_sample(timestamp, measured):
+        return sample(timestamp, tau_free=dict(timestamp_s=timestamp, valid=True,
+                      tau_measured=np.full(7, measured), tau_pred=np.full(7, 2.)))
+    history.ingest(predicted_sample(10., 5.), 10.)
+    history.ingest(predicted_sample(9.99, 99.), 10.01)
+    np.testing.assert_allclose(history.prediction_arrays(10.01)[1][-1], 3.)
+    history.ingest(predicted_sample(9., 6.), 9.)
+    t, residual = history.prediction_arrays(9.)
+    np.testing.assert_allclose(t, [0.])
+    np.testing.assert_allclose(residual[-1], 4.)
+
+
+def test_repeated_prediction_survives_a_display_window_shorter_than_its_age():
+    history = TorqueHistory(ConstantMassModel(), .15, .01)
+    prediction = dict(timestamp_s=10., valid=True,
+                      tau_measured=np.full(7, 5.), tau_pred=np.full(7, 2.))
+    history.ingest(sample(tau_free=prediction), 10.)
+    assert history.prediction_arrays(10.02)[0].size == 0
+    history.ingest(sample(10.02, tau_free=prediction), 10.02)
+    assert history.prediction_arrays(10.02)[0].size == 0
+
+
+def test_publisher_keeps_network_measurement_and_prediction_paired():
+    import queue
+    from gello_teleop.tau_free_feedback import TauFreeResult
+    from nero_collection.arms.base import ArmState
+    visualizer = TorqueVisualizer({})
+    visualizer.process = Mock()
+    visualizer.process.is_alive.return_value = True
+    visualizer.samples = queue.Queue()
+    state = ArmState(np.zeros(7), np.zeros(7), np.zeros(7), np.eye(4),
+                     np.full(7, 99.), np.zeros(7), 1_020_000)
+    result = TauFreeResult(1_000_000, 1_010_000, np.full(7, 2.), np.full(7, 5.),
+                           np.full(7, 3.), np.full(7, 3.), True)
+    visualizer.publish(['right'], [state], tau_free_results=[result])
+    packet = visualizer.samples.get_nowait()['right']
+    assert packet['timestamp_s'] == 1.02
+    assert packet['tau_free']['timestamp_s'] == 1.
+    np.testing.assert_allclose(packet['tau_free']['tau_measured'], 5.)
+    result.tau_measured[:] = 0.
+    np.testing.assert_allclose(packet['tau_free']['tau_measured'], 5.)
 
 
 def test_publisher_queue_full_does_not_block():

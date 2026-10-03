@@ -10,7 +10,84 @@ import pytest
 import yaml
 
 from nero_collection.config import CameraConfig, OutputConfig, _parse_output
+from nero_collection.h5_schema import public_dataset_name
 from nero_collection.h5_writer import EpisodeBuffer
+
+
+POSE_DATASETS = {'left': 'left_q_eepose_xarm', 'right': 'right_eepose_xarm'}
+
+
+@pytest.mark.parametrize('arm_names', [('left', 'right'), ('right', 'left')])
+def test_dual_arm_h5_splits_values_and_metadata_without_mixing_arms(tmp_path, arm_names):
+    from test_dual_gello_pipeline import make_pipeline
+    from inference.h5_observation_stream import H5ObservationEpisode
+    pipeline = make_pipeline()
+    try:
+        buffer = EpisodeBuffer(pipeline.collection_config, arm_names, enable_online_tau_ext=False)
+        poses = np.stack([np.eye(4), np.eye(4)])
+        poses[1, 0, 3] = .5
+        for index in range(3):
+            q = np.arange(14, dtype=float) + index
+            buffer.append_teleop(1_000_000 + index * 10_000, {
+                'q_follower': ('q', q), 'dq_follower': ('velocity', q + 10),
+                'ddq_follower': ('acceleration', q + 20),
+                'tau_follower': ('torque', q + 30), 'q_cmd': ('q', q + 1),
+                'delta_q': ('q_error', np.ones(14)),
+                'dq_valid_follower': ('validity', np.array([1, 0], np.uint8)),
+                'ddq_valid_follower': ('validity', np.array([0, 1], np.uint8)),
+                'q_follower_timestamp_us': ('timestamp', np.array([100 + index, 200 + index], np.int64)),
+                'gripper_follower': ('gripper', np.array([.01, .07])),
+                'ee_pose_follower': ('ee_pose', poses),
+                'sample_lateness_us': ('duration', np.array([index], np.int64)),
+            })
+        buffer.append_camera('camera', 1_000_000, np.zeros((8, 8, 3), np.uint8))
+        path = buffer.save(tmp_path / 'split.h5')
+        with h5py.File(path, 'r+') as episode:
+            rows = episode['teleop']
+            assert 'q_follower' not in rows and 'q_cmd' not in rows
+            for index, arm in enumerate(arm_names):
+                expected_q = np.stack(buffer.teleop_data['q_follower'])[:, index * 7:(index + 1) * 7]
+                np.testing.assert_array_equal(rows[f'{arm}_q_xarm'][:], expected_q)
+                assert rows[f'{arm}_q_xarm'].shape == (3, 7)
+                np.testing.assert_array_equal(rows[f'{arm}_q_timestamp_us_xarm'][:, 0],
+                                              (100 if index == 0 else 200) + np.arange(3))
+                assert rows[f'{arm}_dq_valid_xarm'].shape == (3, 1)
+                assert np.all(rows[f'{arm}_dq_valid_xarm'][:] == 1 - index)
+                np.testing.assert_array_equal(rows[f'{arm}_gripper_xarm'][:, 0],
+                                              np.full(3, .01 if index == 0 else .07))
+                np.testing.assert_array_equal(rows[POSE_DATASETS[arm]][:],
+                                              np.repeat(poses[index:index + 1], 3, axis=0))
+                assert rows[f'{arm}_dq_xarm'].attrs['validity_path'] == f'teleop/{arm}_dq_valid_xarm'
+                assert rows[f'{arm}_ddq_xarm'].attrs['validity_path'] == f'teleop/{arm}_ddq_valid_xarm'
+                assert rows[f'{arm}_dq_xarm'].attrs['timestamp_path'] == 'teleop/timestamp_us'
+                assert rows[f'{arm}_q_cmd_xarm'].attrs['arm_name'] == arm
+                assert f'{arm}_q_cmd_xarm' in rows.attrs['command_datasets']
+                # Inference additionally requires a wrench, supplied by its own pipeline.
+                rows.create_dataset(f'{arm}_wrench_ext_xarm', data=np.zeros((3, 6)))
+            assert rows['sample_lateness_us'].shape == (3, 1)
+        for index, arm in enumerate(arm_names):
+            view = H5ObservationEpisode.from_h5(path, camera_name='camera', arm_name=arm)
+            view_by_index = H5ObservationEpisode.from_h5(path, camera_name='camera', arm_index=index)
+            expected_q = np.stack(buffer.teleop_data['q_follower'])[:, index * 7:(index + 1) * 7]
+            np.testing.assert_array_equal(view.q, expected_q)
+            np.testing.assert_array_equal(view_by_index.q, expected_q)
+            np.testing.assert_array_equal(view.dq, expected_q + 10)
+            np.testing.assert_array_equal(view.tau, expected_q + 30)
+        # Legacy episodes remain readable with their concatenated channels.
+        with h5py.File(path, 'r+') as episode:
+            rows = episode['teleop']
+            for name in ('q_follower', 'dq_follower', 'ddq_follower', 'tau_follower', 'wrench_ext'):
+                rows.create_dataset(name, data=np.concatenate(
+                    [rows[public_dataset_name(arm, name)][:] for arm in arm_names], axis=1))
+                for arm in arm_names:
+                    del rows[public_dataset_name(arm, name)]
+        for index, arm in enumerate(arm_names):
+            legacy = H5ObservationEpisode.from_h5(path, camera_name='camera', arm_name=arm)
+            expected_q = np.stack(buffer.teleop_data['q_follower'])[:, index * 7:(index + 1) * 7]
+            np.testing.assert_array_equal(legacy.q, expected_q)
+            np.testing.assert_array_equal(legacy.ddq, expected_q + 20)
+    finally:
+        pipeline.close()
 
 
 @pytest.mark.parametrize('compression', [None, 'gzip', 'lzf'])
@@ -44,11 +121,12 @@ def test_raw_h5_preserves_30hz_images_and_100hz_joint_rows_with_bounded_copy(
     assert not path.with_suffix('.h5.tmp').exists()
     with h5py.File(path) as episode:
         rows = episode['teleop']
-        assert rows['q_follower'].shape == (100, 7)
+        assert rows['right_q_xarm'].shape == (100, 7)
         assert rows.attrs['sample_rate_hz'] == 100
         np.testing.assert_array_equal(rows['timestamp_us'][:], buffer.teleop_timestamps_us)
         for key in ('q_follower', 'dq_follower', 'ddq_follower_raw', 'tau_follower'):
-            np.testing.assert_array_equal(rows[key][:], original_stack(buffer.teleop_data[key]))
+            np.testing.assert_array_equal(rows[public_dataset_name('right', key)][:],
+                                          original_stack(buffer.teleop_data[key]))
         camera = episode['cameras/right wrist']
         assert camera['frames'].shape == (30, 224, 224, 3)
         assert camera['depth'].shape == (30, 224, 224)

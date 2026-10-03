@@ -1,4 +1,83 @@
-# Nero 完整推理
+# xArm / Nero 模型推理
+
+## xArm：Diffusion Policy、ACT 输出关节 q
+
+现在 `inference.cli` 支持两个 xArm 配置：
+[`configs/dp_xarm.yaml`](configs/dp_xarm.yaml)、
+[`configs/act_xarm.yaml`](configs/act_xarm.yaml)。二者复用
+`gello_teleop/config/xarm7_gello_dual_dataset.yaml` 的机械臂 IP、`active_arms`、
+相机 serial 和有界位置控制参数。推理不需要 GELLO 串口、Contact WM 或 IK。
+
+Native DP 从 `.ckpt` 中恢复训练配置、EMA 权重、图像 shape、相机 key、
+normalizer、`n_obs_steps`、`n_action_steps`。ACT 从同一目录的
+`policy_config.pkl`、`dataset_stats.pkl` 恢复相机顺序、模型结构及 q/action 归一化。
+ACT 旧配置没有图像尺寸和 FPS 时，`policy.dataset_path` 指向原训练 LeRobot 数据，
+读取 `meta/info.json`；也可显式配置 `policy.image_shape: [3, H, W]` 和
+`execution.action_rate_hz`。相机输入使用 RGB；尺寸由模型适配器按训练尺寸调整。
+新 xArm DP 入口面向本机 `diffusion_policy` 训练的 Hydra checkpoint；旧 LeRobot
+DP / Nero 配置继续使用下面的原有入口。
+
+先在有模型依赖的环境中检查，不连接机械臂或相机：
+
+```bash
+conda activate robodiff
+# 真机相机/SDK，以及 ACT 原生代码依赖；已有 PyTorch 无需重装。
+python -m pip install xArm-Python-SDK pyrealsense2 IPython
+python -m inference.cli --config inference/configs/dp_xarm.yaml --active-arms right --check
+python -m inference.cli --config inference/configs/act_xarm.yaml --checkpoint /path/to/act/policy_best.ckpt --active-arms right --check
+```
+
+完整依赖见 `requirements-inference.txt`。ACT 默认从相邻的 `../act` 源码目录构建模型，
+可用 `policy.source_path` 修改；仅加载 checkpoint 权重，不创建训练优化器或下载预训练 backbone。
+DP 默认配置指向当前找到的 joint checkpoint；路径相对于 YAML。
+`--checkpoint`、`--device` 可以在命令行覆盖；ACT 输出目录优先选 `policy_best.ckpt`，
+否则在启动时选最新 epoch，运行中不更换权重。
+
+模拟相机和机械臂跑通模型到 q 执行链路：
+
+```bash
+python -m inference.cli --config inference/configs/dp_xarm.yaml --active-arms right --device cpu --backend mock --enable-command --duration 5
+```
+
+真机读取观测并推理（默认不使能、不发送 q）：
+
+```bash
+python -m inference.cli --config inference/configs/dp_xarm.yaml --active-arms right --run
+```
+
+执行模型输出的绝对关节角，单位 rad：
+
+```bash
+python -m inference.cli --config inference/configs/dp_xarm.yaml --active-arms right --run --enable-command
+python -m inference.cli --config inference/configs/act_xarm.yaml --checkpoint /path/to/joint_act/policy_best.ckpt --active-arms right --run --enable-command
+```
+
+`c` 连续推理、`p` 暂停并停止机械臂、`s` 执行一个完整 action chunk 后暂停、
+`q` / Ctrl-C 停止并退出；`--single-step` 以暂停状态启动。进入执行时从实际 q 初始化位置参考，
+不自动回零；退出时停止位置伺服并保持电机供电，不清除控制器故障。
+
+模型在独立 worker 中推理，相机持续采集，控制按 `execution.control_hz` 下发 q。
+相机和机械臂状态按原始时间戳因果对齐；DP 的历史窗口按训练采样周期取帧，首次不足时重复最早帧。
+每个 action chunk 的所有 q 按训练 FPS 顺序消费，下一次预测在末尾预取；新预测不会覆盖尚未执行完的 chunk。
+q 会经过现有的 `SecondOrderPositionFollower` 做速度、加速度、单次步长及跟踪误差限制。
+关节范围读取 GELLO 标定中指定的 URDF；可通过 `execution.joint_limits` 按左右臂显式覆盖。
+所需相机过期、状态过期、推理结果过期、模型异常或 SDK 发送异常会停止所有正在执行的臂。
+
+`active_arms` 沿用采集配置，也可在部署 YAML 或 `--active-arms right` 中覆盖。
+单臂模型必须输出 7 维；双臂模型必须输出 14 维，按 `active_arms` 列表顺序拆分。
+上述示例使用当前七维 checkpoint，只控制右臂；即使采集配置启用双臂，也通过
+`--active-arms right` 为该模型选择右臂。使用十四维双臂权重时改为
+`--active-arms left right`。相机数量独立于执行臂数量：当前 DP 即使只控制右臂，
+仍需 `left_wrist`、`right_wrist` 两个视角。
+`observation.camera_map` 可将 checkpoint key 映射到不同的硬件相机名称。
+
+当前发现的 `../act/outputs/erase_board_eepose/policy_config.pkl` 设置了
+`quaternion_indices: [3,4,5,6]`，训练时将末四维按四元数归一化。
+这份权重不能用于七轴 q 执行，启动检查会报错。关节 ACT 应使用
+`--state_key observation.joint --action_key action.joint`，并省略 `--quaternion_indices`
+重新训练；只修改已保存的配置不能恢复被改变的训练目标。
+
+## 原有 Nero 推理流程
 
 > 开发模块、公共契约和新增 DP/PI0 action expert 的指南见
 > [`README_DEVELOPMENT.md`](README_DEVELOPMENT.md)。本文主要记录运行时配置、真机启动、H5 回放和 MuJoCo 使用方式。
@@ -331,9 +410,12 @@ the `q` MuJoCo servo when `predictor.enabled: false`.
 ddq、command/applied torque、q/dq/tau target、DP/PINN 更新标记和 MuJoCo 接触计数，生成的
 执行器 MJCF 可用 `--scene-output` 保存。
 
-H5 loader 要求 `teleop/timestamp_us`、`q_follower`、`dq_follower`、`tau_follower`、
-外力矩（优先 `wrench_ext`，旧录音兼容 `wrench_cal`/`wrench_pred`）以及所选 camera 的
-`frames/timestamp_us`。如果旧录音没有 `ddq_follower`，默认用 timestamp-aware 的因果
+H5 loader 要求 `teleop/timestamp_us`，GELLO/xArm 数据按所选臂读取
+`<side>_q_xarm`、`<side>_dq_xarm`、`<side>_tau_xarm`，外力使用
+`<side>_wrench_ext_xarm`。Nero 和旧录音继续兼容 `q_follower`、`dq_follower`、
+`tau_follower`、`wrench_ext` 及 `wrench_cal`/`wrench_pred`，也兼容带侧别的旧字段。
+此外要求所选 camera 的 `frames/timestamp_us`。如果录音没有
+`<side>_ddq_xarm` 或旧字段 `ddq_follower`，默认用 timestamp-aware 的因果
 `dq` 后向差分补出 ddq；严格复现实验可通过 `derive_ddq_if_missing=False` 禁止该回退。arm
 名称同时支持 `teleop` 属性和旧格式的 `metadata/arm_names_json`。相机对状态是因果对齐的
 （只使用当前 tick 之前的最新帧），direct-IK 的 wrench 窗口按每个历史图像重新构造为

@@ -1,4 +1,4 @@
-"""Seven rows of measured / URDF torque; two columns per selected arm.
+"""URDF feedback L1 norm and seven joint residuals per selected arm.
 
 Demo: python -m xarm_stack.torque_visualization --demo --headless --duration 3
       --save-plot /tmp/dual_torque.png
@@ -99,8 +99,10 @@ def make_models(cfg):
 
 
 class TorqueHistory:
-    def __init__(self, model, stale_s, window_s, measured_torque_cutoff_hz=3., acceleration_cutoff_hz=3.):
+    def __init__(self, model, stale_s, window_s, measured_torque_cutoff_hz=3., acceleration_cutoff_hz=3.,
+                 *, force_feedback_source=None):
         self.model, self.stale_s, self.window_s = model, stale_s, window_s
+        self.force_feedback_source = force_feedback_source
         self.measured_filter = FirstOrderLowPass(measured_torque_cutoff_hz, stale_s)
         self.acceleration_filter = FirstOrderLowPass(acceleration_cutoff_hz, stale_s,
                                                     setting_name='acceleration_cutoff_hz')
@@ -109,8 +111,22 @@ class TorqueHistory:
         self.in_gap = False
         self.status = 'waiting for state'
         self.measured_status = 'waiting for torque'
+        self.prediction_rows = deque(maxlen=20000)
+        self.prediction_timestamp = None
+        self.prediction_in_gap = True
+        self.urdf_feedback_rows = deque(maxlen=20000)
+        self.urdf_feedback_timestamp = None
+        self.urdf_feedback_in_gap = True
 
     def ingest(self, sample, now):
+        # Inference arrives asynchronously, including on a repeated robot report.
+        # Its own measured torque and source timestamp must stay paired with it.
+        self._ingest_prediction(sample.get('tau_free') if self.force_feedback_source != 'urdf' else None, now)
+        self._ingest_urdf_feedback(sample.get('urdf_feedback'), now)
+        if self.force_feedback_source == 'urdf':
+            # The feedback worker already calculated and averaged tau_ext.
+            # Both the joint curves and norm reuse that result.
+            return
         timestamp = sample['timestamp_s']
         fresh = np.isfinite(timestamp) and 0 <= now-timestamp <= self.stale_s
         if not fresh:
@@ -174,6 +190,95 @@ class TorqueHistory:
                 np.stack([row[1] for row in self.rows]), np.stack([row[2] for row in self.rows]),
                 np.stack([row[3] for row in self.rows]))
 
+    def _prediction_gap(self, now):
+        if not self.prediction_in_gap:
+            self.prediction_rows.append((now, np.full(7, np.nan)))
+            self.prediction_in_gap = True
+
+    def _ingest_prediction(self, prediction, now):
+        if prediction is None:
+            self._prediction_gap(now)
+            return
+        timestamp = float(prediction.get('timestamp_s', np.nan))
+        measured = np.asarray(prediction.get('tau_measured', np.full(7, np.nan)), float)
+        predicted = np.asarray(prediction.get('tau_pred', np.full(7, np.nan)), float)
+        if (not prediction.get('valid', False) or not np.isfinite(timestamp)
+                or not 0 <= now-timestamp <= self.stale_s
+                or measured.shape != (7,) or predicted.shape != (7,)
+                or not np.isfinite(measured).all() or not np.isfinite(predicted).all()):
+            self._prediction_gap(now)
+            return
+        if self.prediction_timestamp is not None and timestamp < self.prediction_timestamp:
+            if now >= self.prediction_timestamp:
+                return  # Do not let a late result overwrite a newer prediction.
+            # A host-clock reversal starts a new timeline for both streams.
+            self.prediction_rows.clear()
+            self.prediction_timestamp, self.prediction_in_gap = None, True
+        residual = measured-predicted
+        if timestamp == self.prediction_timestamp and not self.prediction_in_gap and self.prediction_rows:
+            self.prediction_rows[-1] = (timestamp, residual)
+            return
+        if self.prediction_timestamp is not None and timestamp-self.prediction_timestamp > self.stale_s:
+            self._prediction_gap(self.prediction_timestamp+self.stale_s)
+        self.prediction_rows.append((timestamp, residual))
+        self.prediction_timestamp, self.prediction_in_gap = timestamp, False
+
+    def prediction_arrays(self, now):
+        if self.prediction_timestamp is not None and now-self.prediction_timestamp > self.stale_s:
+            self._prediction_gap(now)
+        while self.prediction_rows and self.prediction_rows[0][0] < now-self.window_s:
+            self.prediction_rows.popleft()
+        if not self.prediction_rows:
+            return np.empty(0), np.empty((0, 7))
+        return (np.asarray([row[0] for row in self.prediction_rows])-now,
+                np.stack([row[1] for row in self.prediction_rows]))
+
+    def _urdf_feedback_gap(self, now):
+        if not self.urdf_feedback_in_gap:
+            self.urdf_feedback_rows.append((now, np.full(7, np.nan)))
+            self.urdf_feedback_in_gap = True
+
+    def _ingest_urdf_feedback(self, result, now):
+        # The collector has already computed and averaged this residual.
+        # Keep it paired with its own source time, even on a repeated report.
+        timestamp = float(result.get('timestamp_s', np.nan)) if result is not None else np.nan
+        residual = np.asarray(result.get('tau_ext', np.full(7, np.nan)), float) if result is not None else None
+        if (result is None or not result.get('valid', False) or not np.isfinite(timestamp)
+                or not 0 <= now-timestamp <= self.stale_s or residual.shape != (7,)
+                or not np.isfinite(residual).all()):
+            self._urdf_feedback_gap(now)
+            return
+        if self.urdf_feedback_timestamp is not None and timestamp < self.urdf_feedback_timestamp:
+            if now >= self.urdf_feedback_timestamp:
+                return  # A late asynchronous result must not overwrite a newer one.
+            self.urdf_feedback_rows.clear()
+            self.urdf_feedback_timestamp, self.urdf_feedback_in_gap = None, True
+        if (timestamp == self.urdf_feedback_timestamp and not self.urdf_feedback_in_gap
+                and self.urdf_feedback_rows):
+            self.urdf_feedback_rows[-1] = (timestamp, residual.copy())
+            return
+        if (self.urdf_feedback_timestamp is not None
+                and timestamp-self.urdf_feedback_timestamp > self.stale_s):
+            self._urdf_feedback_gap(self.urdf_feedback_timestamp+self.stale_s)
+        self.urdf_feedback_rows.append((timestamp, residual.copy()))
+        self.urdf_feedback_timestamp, self.urdf_feedback_in_gap = timestamp, False
+
+    def urdf_feedback_arrays(self, now):
+        if (self.urdf_feedback_timestamp is not None
+                and not 0 <= now-self.urdf_feedback_timestamp <= self.stale_s):
+            self._urdf_feedback_gap(now)
+        while self.urdf_feedback_rows and self.urdf_feedback_rows[0][0] < now-self.window_s:
+            self.urdf_feedback_rows.popleft()
+        if not self.urdf_feedback_rows:
+            return np.empty(0), np.empty((0, 7))
+        return (np.asarray([row[0] for row in self.urdf_feedback_rows])-now,
+                np.stack([row[1] for row in self.urdf_feedback_rows]))
+
+    def urdf_feedback_l1_arrays(self, now):
+        timestamps, residual = self.urdf_feedback_arrays(now)
+        # sum, rather than nansum, preserves invalid samples as curve gaps.
+        return timestamps, np.sum(np.abs(residual), axis=1)
+
 
 class TorqueWindow:
     def __init__(self, cfg, models, *, headless=False):
@@ -187,19 +292,51 @@ class TorqueWindow:
         self.lock = threading.Lock()
         self.history = {side: TorqueHistory(model, cfg['stale_s'], cfg['window_s'],
                                            cfg['sides'][side]['measured_torque_cutoff_hz'],
-                                           cfg['sides'][side]['acceleration_cutoff_hz'])
+                                           cfg['sides'][side]['acceleration_cutoff_hz'],
+                                           force_feedback_source=cfg.get('force_feedback_source'))
                         for side, model in models.items()}
         self.layout_sides = cfg['active_sides']
-        columns = 2*len(self.layout_sides)
-        self.figure, self.axes = plt.subplots(7, columns, figsize=(8.5*len(self.layout_sides), 10),
+        self.urdf_feedback_view = cfg.get('force_feedback_source') == 'urdf'
+        rows, columns = (8, len(self.layout_sides)) if self.urdf_feedback_view else (7, 2*len(self.layout_sides))
+        figure_size = (7*len(self.layout_sides), 10) if self.urdf_feedback_view else (8.5*len(self.layout_sides), 10)
+        self.figure, self.axes = plt.subplots(rows, columns, figsize=figure_size,
                                              sharex=True, squeeze=False)
-        self.figure.canvas.manager.set_window_title('xArm7 measured / URDF torque')
-        self.figure.suptitle('xArm7 measured / theoretical torque [Nm]')
+        self.figure.canvas.manager.set_window_title(
+            'xArm7 tau_ext_l1 / J1..J7 tau_ext' if self.urdf_feedback_view else 'xArm7 tau_ext_pred / tau_ext_cal')
+        self.figure.suptitle('xArm7 external torque: L1 norm and J1..J7 [Nm]' if self.urdf_feedback_view else
+                             'xArm7 external torque: measured - network / URDF [Nm]')
         self.lines, self.labels = {}, {}
         for side_index, side in enumerate(self.layout_sides):
+            if self.urdf_feedback_view:
+                axis = self.axes[0, side_index]
+                mean_window = cfg.get('force_feedback_mean_windows', {}).get(side)
+                title = (f'||tau_ext||₁ (URDF, mean {mean_window} samples)'
+                         if mean_window is not None else '||tau_ext||₁ (URDF, moving mean)')
+                axis.set_title(f'{side.title()} | tau_ext_l1 = {title}', fontsize=10)
+                self.lines[0, side_index], = axis.plot([], [], color='#1976d2', lw=1.2)
+                self.labels[0, side_index] = axis.text(.98, .85, '-- Nm', transform=axis.transAxes,
+                                                      ha='right', fontsize=9)
+                axis.grid(alpha=.25)
+                axis.set_ylabel('||tau_ext||₁ [Nm]')
+                axis.set_xlim(-cfg['window_s'], 0.)
+                axis.set_ylim(0., 1.)
+                for joint in range(7):
+                    row = joint+1
+                    axis = self.axes[row, side_index]
+                    axis.set_title(f'{side.title()} | J{joint+1} tau_ext', fontsize=9)
+                    self.lines[row, side_index], = axis.plot([], [], color='#e67e22', lw=1.2)
+                    self.labels[row, side_index] = axis.text(.98, .85, '-- Nm', transform=axis.transAxes,
+                                                            ha='right', fontsize=8)
+                    axis.grid(alpha=.25)
+                    axis.axhline(0., color='gray', lw=.7, ls='--')
+                    axis.set_ylabel(f'J{joint+1} [Nm]', fontsize=8)
+                    axis.set_xlim(-cfg['window_s'], 0.)
+                    axis.set_ylim(-1., 1.)
+                self.axes[-1, side_index].set_xlabel('Time [s, relative to now]')
+                continue
             for kind in range(2):
                 column = 2*side_index+kind
-                title = 'xArm measured' if kind == 0 else 'URDF theoretical'
+                title = 'tau_ext_pred' if kind == 0 else 'tau_ext_cal (URDF)'
                 self.axes[0, column].set_title(f'{side.title()} | {title}', fontsize=10)
                 for joint in range(7):
                     axis = self.axes[joint, column]
@@ -207,11 +344,12 @@ class TorqueWindow:
                     self.labels[joint, column] = axis.text(.98, .85, '-- Nm', transform=axis.transAxes,
                                                          ha='right', fontsize=8)
                     axis.grid(alpha=.25)
+                    axis.axhline(0., color='gray', lw=.7, ls='--')
                     axis.set_ylabel(f'J{joint+1} [Nm]', fontsize=8)
                     axis.set_xlim(-cfg['window_s'], 0.)
                     axis.set_ylim(-1., 1.)
                 self.axes[-1, column].set_xlabel('Time [s, relative to now]')
-        self.figure.tight_layout(rect=(0, 0, 1, .96))
+        self.figure.tight_layout(rect=(.03, 0, 1, .96))
         self.figure.canvas.mpl_connect('key_press_event', self._key)
         if not headless:
             plt.show(block=False)
@@ -230,15 +368,34 @@ class TorqueWindow:
         for side_index, side in enumerate(self.layout_sides):
             if side not in self.history:
                 continue
+            if self.urdf_feedback_view:
+                with self.lock:
+                    timestamps, residual = self.history[side].urdf_feedback_arrays(now)
+                # All eight curves share the same averaged result and source
+                # timestamp. Ordinary sum preserves invalid rows as NaN gaps.
+                l1 = np.sum(np.abs(residual), axis=1)
+                for row in range(8):
+                    values = l1 if row == 0 else residual[:, row-1]
+                    self.lines[row, side_index].set_data(timestamps, values)
+                    latest = values[-1] if len(values) else np.nan
+                    label = f'{latest:.3f} Nm' if row == 0 else f'{latest:+.3f} Nm'
+                    self.labels[row, side_index].set_text(label if np.isfinite(latest) else '-- Nm')
+                    finite = values[np.isfinite(values)]
+                    bound = max(.1, float(np.max(np.abs(finite)))*1.2) if finite.size else 1.
+                    self.axes[row, side_index].set_ylim(0. if row == 0 else -bound, bound)
+                continue
             with self.lock:
-                t, model, measured, gravity = self.history[side].arrays(now)
+                t, model, measured, _ = self.history[side].arrays(now)
+                prediction_t, predicted_residual = self.history[side].prediction_arrays(now)
+                calculated_residual = measured-model
             for joint in range(7):
-                finite = np.concatenate((model[:, joint], measured[:, joint]))
+                finite = np.concatenate((predicted_residual[:, joint], calculated_residual[:, joint]))
                 finite = finite[np.isfinite(finite)]
                 bound = max(.1, float(np.max(np.abs(finite)))*1.2) if finite.size else 1.
-                for kind, values in enumerate((measured, model)):
+                for kind, (timestamps, values) in enumerate(((prediction_t, predicted_residual),
+                                                           (t, calculated_residual))):
                     column = 2*side_index+kind
-                    self.lines[joint, column].set_data(t, values[:, joint])
+                    self.lines[joint, column].set_data(timestamps, values[:, joint])
                     latest = values[-1, joint] if len(values) else np.nan
                     self.labels[joint, column].set_text(f'{latest:+.3f} Nm' if np.isfinite(latest) else '-- Nm')
                     self.axes[joint, column].set_ylim(-bound, bound)
@@ -338,7 +495,7 @@ class TorqueVisualizer:
             parent.close()
             child.close()
 
-    def publish(self, sides, states):
+    def publish(self, sides, states, *, tau_free_results=None, urdf_results=None):
         if self.process is None or not self.process.is_alive():
             if not self._reported_exit:
                 log.info('Torque window closed; collection continues')
@@ -351,6 +508,17 @@ class TorqueVisualizer:
                                ddq_valid=getattr(state, 'ddq_valid', state.dq_valid),
                                torque=np.asarray(state.torque).copy(), torque_valid=state.torque_valid)
                     for side, state in zip(sides, states)}
+        if tau_free_results is not None and self.cfg.get('force_feedback_source') != 'urdf':
+            for side, result in zip(sides, tau_free_results):
+                snapshot[side]['tau_free'] = dict(
+                    timestamp_s=result.source_timestamp_us/1e6, valid=bool(result.valid),
+                    tau_measured=np.asarray(result.tau_measured).copy(),
+                    tau_pred=np.asarray(result.tau_pred).copy())
+        if urdf_results is not None:
+            for side, result in zip(sides, urdf_results):
+                snapshot[side]['urdf_feedback'] = dict(
+                    timestamp_s=result.source_timestamp_us/1e6, valid=bool(result.valid),
+                    tau_ext=np.asarray(result.tau_ext).copy())
         for side, sample in snapshot.items():
             settings = self.cfg.get('sides', {}).get(side, {})
             if settings.get('payload', {}).get('source') == 'controller':
@@ -395,7 +563,7 @@ def main(argv=None):
     start = time.time()
     next_draw = 0.
     try:
-        # Analytic synthetic trajectory; RNEA supplies synthetic measured effort.
+        # Analytic synthetic trajectory and residual; no trained model or hardware.
         for t in np.arange(0., args.duration, .01):
             snapshots = {}
             for side in args.active_sides:
@@ -404,10 +572,13 @@ def main(argv=None):
                 q = .15*np.sin(1.5*t+phase) + np.array([0., -.4, 0., .6, 0., .4, 0.])
                 dq = .225*np.cos(1.5*t+phase)
                 ddq = -.3375*np.sin(1.5*t+phase)
-                torque = model.rnea(q, dq, ddq)
+                free_torque = model.rnea(q, dq, ddq)
+                torque = free_torque+.4*np.sin(2*t+phase)
                 snapshots[side] = dict(timestamp_s=start+t, q=q, dq=dq, q_valid=True, dq_valid=True,
                                        ddq=ddq, ddq_valid=True,
-                                       torque=torque, torque_valid=True)
+                                       torque=torque, torque_valid=True,
+                                       tau_free=dict(timestamp_s=start+t, valid=True,
+                                                     tau_measured=torque, tau_pred=free_torque))
             window.ingest(snapshots, start+t)
             if t >= next_draw:
                 window.draw(start+t)

@@ -229,10 +229,10 @@ def test_single_arm_lifecycle_recording_and_reference_save(tmp_path, side, keep_
         output = tmp_path/'single.h5'
         pipeline.buffer.save(output)
         with h5py.File(output) as episode:
-            assert episode['teleop/q_follower'].shape[1] == 7
-            assert episode['teleop/q_cmd'].shape[1] == 7
-            assert episode['teleop/gripper_cmd'].shape[1] == 1
-            assert episode['teleop/gripper_cmd_valid'][:].any()
+            assert episode[f'teleop/{side}_q_xarm'].shape[1] == 7
+            assert episode[f'teleop/{side}_q_cmd_xarm'].shape[1] == 7
+            assert episode[f'teleop/{side}_gripper_cmd_xarm'].shape[1] == 1
+            assert episode[f'teleop/{side}_gripper_cmd_valid_xarm'][:].any()
             metadata = json.loads(episode['metadata/episode_json'][()])
             assert metadata['arm_names'] == [side]
             assert metadata['gripper_mode'] == gripper_mode

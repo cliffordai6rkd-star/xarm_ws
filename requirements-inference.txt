@@ -1,0 +1,14 @@
+# Install with a PyTorch / torchvision build appropriate for your GPU.
+# Reuse the robodiff training environment for native DP dependencies.
+-r requirements-xarm.txt
+torch>=2.6
+torchvision>=0.21
+hydra-core>=1.2
+omegaconf>=2.2
+dill>=0.3.5
+diffusers>=0.11
+einops>=0.6
+IPython>=8
+opencv-python>=4.8
+xArm-Python-SDK>=1.14
+pyrealsense2

@@ -17,6 +17,7 @@ import argparse
 from contextlib import contextmanager
 import json
 import logging
+import math
 import queue
 import signal
 import sys
@@ -33,9 +34,11 @@ import yaml
 
 from gello_teleop.gello_hardware import GelloReader
 from gello_teleop.gello_damping import damping_config
+from gello_teleop.tau_free_feedback import TauFreeFeedbackWorker
 from gello_teleop.inspect_gello_grippers import format_status
 from gello_teleop.uf_robot_gello_teleop import JointMapper, load_configs
 from gello_teleop.reference_pose import ReferencePosePublisher, capture_current_pose, overwrite_reference_pose
+from ufactory_devices.robot.position_reference import SecondOrderPositionFollower
 from nero_collection.cameras import CameraManager, CameraVisualizer
 from nero_collection.config import (
     ArmEndpointConfig,
@@ -47,6 +50,7 @@ from nero_collection.config import (
     TeleopConfig,
 )
 from nero_collection.episode_output import episode_path, next_episode_index
+from nero_collection.episode_saver import EpisodeSaveProcess
 from nero_collection.fixed_rate import FixedRateTicker
 from nero_collection.h5_writer import EpisodeBuffer
 from nero_collection.keyboard import TerminalKeys
@@ -57,27 +61,30 @@ from xarm_stack.torque_visualization import TorqueVisualizer
 log = logging.getLogger("dual_gello_collect")
 
 
-def _save_episode_buffer(buffer, target, *, release=False):
+def _release_episode_buffer(buffer):
+    """Release frozen data in bounded batches so control can keep the GIL."""
+    for collection in (buffer.teleop_data, buffer.camera_frames,
+                       buffer.camera_depth_frames, buffer.camera_timestamps_us):
+        for values in collection.values():
+            batch_size = 16 if collection is buffer.camera_frames or collection is buffer.camera_depth_frames else 2048
+            while values:
+                del values[-batch_size:]
+                time.sleep(0)
+        collection.clear()
+    while buffer.teleop_timestamps_us:
+        del buffer.teleop_timestamps_us[-2048:]
+        time.sleep(0)
+
+
+def _save_episode_buffer(buffer, target, *, release=False, writer=None):
     """Own a frozen episode while saving; never touch robot/producer objects."""
     duration = buffer.episode_metadata.get('recorded_duration_s', 0.)
     count = buffer.sample_count
-    path = buffer.save(target)
+    path = buffer.save(target) if writer is None else writer.save(buffer, target)
     log.info('episode 保存完成：长度 %.3f s，%d 个样本；保存路径：%s',
              duration, count, Path(path).resolve())
     if release:
-        # Millions of small arrays must also be released cooperatively. A
-        # single giant list destruction can hold the GIL and delay control.
-        for collection in (buffer.teleop_data, buffer.camera_frames,
-                           buffer.camera_depth_frames, buffer.camera_timestamps_us):
-            for values in collection.values():
-                batch_size = 16 if collection is buffer.camera_frames or collection is buffer.camera_depth_frames else 2048
-                while values:
-                    del values[-batch_size:]
-                    time.sleep(0)
-            collection.clear()
-        while buffer.teleop_timestamps_us:
-            del buffer.teleop_timestamps_us[-2048:]
-            time.sleep(0)
+        _release_episode_buffer(buffer)
     return path
 
 
@@ -112,6 +119,7 @@ class ControlSample:
     gripper_cmd_valid: np.ndarray
     gripper_cmd_timestamp_us: np.ndarray
     gripper_follower_timestamp_us: np.ndarray
+    force_feedback_values: dict[str, tuple[str, np.ndarray]] | None = None
 
 
 class _GripperPressDetector:
@@ -244,67 +252,11 @@ class _GripperWorker:
             log.exception('gripper I/O failed on %s', self.arm.name)
 
 
-class SecondOrderPositionFollower:
-    """Bounded independent reference state for xArm position servoing."""
-
-    def __init__(self, dof: int, mode: str = "direct", *, kp=18.0, kd=3.0,
-                 max_velocity=1.5, max_acceleration=8.0, max_step=0.08,
-                 max_tracking_error=0.25, joint_limits=None):
-        self.dof = int(dof)
-        self.mode = str(mode).lower()
-        if self.mode not in {"direct", "second_order"}:
-            raise ValueError("control.position_mode must be direct or second_order")
-        self.kp = _joint_vector(kp, self.dof, "kp")
-        self.kd = _joint_vector(kd, self.dof, "kd")
-        self.max_velocity = _joint_vector(max_velocity, self.dof, "max_velocity")
-        self.max_acceleration = _joint_vector(max_acceleration, self.dof, "max_acceleration")
-        self.max_step = _joint_vector(max_step, self.dof, "max_step")
-        self.max_tracking_error = _joint_vector(max_tracking_error, self.dof, "max_tracking_error")
-        self.joint_limits = None if joint_limits is None else np.asarray(joint_limits, dtype=float)
-        if self.joint_limits is not None and self.joint_limits.shape != (self.dof, 2):
-            raise ValueError("joint_limits must have shape (dof, 2)")
-        self.q_ref: np.ndarray | None = None
-        self.dq_ref = np.zeros(self.dof)
-
-    def initialize(self, q_actual: np.ndarray) -> None:
-        q = np.asarray(q_actual, dtype=float).reshape(self.dof)
-        if not np.isfinite(q).all():
-            raise ValueError("follower initialization is not finite")
-        self.q_ref = q.copy()
-        self.dq_ref.fill(0.0)
-
-    def update(self, target: np.ndarray, q_actual: np.ndarray, dt: float) -> np.ndarray:
-        target = np.asarray(target, dtype=float).reshape(self.dof)
-        q_actual = np.asarray(q_actual, dtype=float).reshape(self.dof)
-        if not np.isfinite(target).all() or not np.isfinite(q_actual).all():
-            raise ValueError("position reference contains non-finite values")
-        if self.q_ref is None:
-            self.initialize(q_actual)
-        dt = float(np.clip(dt, 1e-4, 0.1))
-        if self.mode == "direct":
-            step_limit = np.minimum(self.max_step, self.max_velocity*dt)
-            q_next = self.q_ref + np.clip(target - self.q_ref, -step_limit, step_limit)
-            q_next = np.minimum(q_next, q_actual + self.max_tracking_error)
-            q_next = np.maximum(q_next, q_actual - self.max_tracking_error)
-            self.dq_ref = np.clip((q_next - self.q_ref) / dt, -self.max_velocity, self.max_velocity)
-            self.q_ref = q_next
-        else:
-            acceleration = np.clip(self.kp * (target - self.q_ref) - self.kd * self.dq_ref,
-                                   -self.max_acceleration, self.max_acceleration)
-            self.dq_ref = np.clip(self.dq_ref + acceleration * dt, -self.max_velocity, self.max_velocity)
-            q_next = self.q_ref + self.dq_ref * dt
-            step = np.clip(q_next - self.q_ref, -self.max_step, self.max_step)
-            q_next = self.q_ref + step
-            q_next = np.minimum(q_next, q_actual + self.max_tracking_error)
-            q_next = np.maximum(q_next, q_actual - self.max_tracking_error)
-            self.q_ref = q_next
-        if self.joint_limits is not None:
-            self.q_ref = np.clip(self.q_ref, self.joint_limits[:, 0], self.joint_limits[:, 1])
-        return self.q_ref.copy()
 
 
 class _LeaderProducer:
-    def __init__(self, reader, mapper, period_s: float, stop: threading.Event, damping_config=None, failure_stop=None):
+    def __init__(self, reader, mapper, period_s: float, stop: threading.Event, damping_config=None, failure_stop=None,
+                 feedback_worker=None, feedback_index=0, feedback_active=None):
         self.reader, self.mapper = reader, mapper
         self.period_s, self.stop = float(period_s), stop
         self.failure_stop = failure_stop if failure_stop is not None else stop
@@ -315,8 +267,17 @@ class _LeaderProducer:
         self.last_error = None
         self.last_read_s = 0.
         self.last_io_s = 0.
+        self.io_stage = 'idle'
+        self.io_started_monotonic_s: float | None = None
+        self.skipped_ticks = 0
         self.thread: threading.Thread | None = None
         self.damping_config = damping_config
+        self.feedback_worker = feedback_worker
+        self.feedback_index = feedback_index
+        self.feedback_active = feedback_active
+        self.feedback_current = np.zeros(7)
+        self.current_command = np.zeros(7)
+        self.feedback_valid = False
         self._previous_mapped: np.ndarray | None = None
         self._previous_t: float | None = None
         self._hold_reference: np.ndarray | None = None
@@ -330,14 +291,23 @@ class _LeaderProducer:
         with self.lock:
             return self.latest
 
+    def current_snapshot(self):
+        with self.lock:
+            return self.feedback_current.copy(), self.current_command.copy(), self.feedback_valid
+
     def _run(self):
         next_t = time.monotonic()
         while not self.stop.is_set():
             started = time.monotonic()
             acquired = now_us()
+            with self.lock:
+                self.io_stage = 'position_read'
+                self.io_started_monotonic_s = started
             try:
-                raw = np.asarray(self.reader.read(), dtype=float)
-                self.last_read_s = time.monotonic()-started
+                try:
+                    raw = np.asarray(self.reader.read(), dtype=float)
+                finally:
+                    self.last_read_s = time.monotonic()-started
                 mapped, _ = self.mapper.target(raw)
                 fraction = np.nan
                 if self.mapper.config.gripper_id >= 0:
@@ -345,6 +315,11 @@ class _LeaderProducer:
                 sample = LeaderSample(raw[:self.mapper.n].copy(), mapped.copy(), now_us(), acquired,
                                      time.monotonic(), self.sequence, True, fraction,
                                       raw[self.mapper.n] if self.mapper.config.gripper_id >= 0 else np.nan)
+                # The encoder sample is already validated. Do not hold it
+                # behind damping writes/readback or change its receive time.
+                with self.lock:
+                    self.latest = sample
+                    self.io_stage = 'damping_write_readback' if self.damping_config is not None else 'finishing'
                 if self.damping_config is not None:
                     now = time.monotonic()
                     dt = max(now - (self._previous_t or now), 1e-4)
@@ -356,34 +331,75 @@ class _LeaderProducer:
                         mapped, self._previous_mapped, dt, cfg, self._hold_reference,
                         self._filtered_velocity,
                     )
+                    feedback_current = np.zeros_like(current)
+                    feedback_valid = False
+                    if self.feedback_worker is not None:
+                        result = self.feedback_worker.snapshot(self.feedback_index)
+                        feedback_valid = (result.valid and not self.failure_stop.is_set()
+                                          and bool(self.feedback_active()))
+                        mapped_current = self.feedback_worker.controllers[self.feedback_index].update(
+                            result.tau_ext, dt, valid=feedback_valid)
+                        feedback_current = mapped_current * np.asarray(cfg.joint_signs)
+                    limits = np.asarray(cfg.damping_current_limit, float)
+                    combined = np.rint(np.clip(current + feedback_current, -limits, limits))
                     raw_dq = np.zeros_like(mapped) if self._previous_mapped is None else (mapped - self._previous_mapped) / dt
                     alpha = float(np.clip(getattr(cfg, "damping_velocity_filter_alpha", 1.0), 1e-6, 1.0))
                     self._filtered_velocity = raw_dq if self._filtered_velocity is None else alpha * raw_dq + (1.0 - alpha) * self._filtered_velocity
-                    self.reader.write_current_damping(current)
+                    self.reader.write_current_damping(combined)
+                    with self.lock:
+                        self.feedback_current = combined - np.rint(current)
+                        self.current_command = combined.copy()
+                        self.feedback_valid = feedback_valid
                     if bool(cfg.weak_hold_enabled) and np.max(np.abs(dq)) < float(cfg.weak_hold_release_velocity):
                         self._hold_reference = 0.98 * self._hold_reference + 0.02 * mapped
                     self._previous_mapped, self._previous_t = mapped.copy(), now
-                self.sequence += 1
-                self.last_io_s = time.monotonic()-started
                 with self.lock:
-                    self.latest = sample
+                    # Startup counts fully verified I/O cycles, including the
+                    # current write/readback, rather than early publications.
+                    self.sequence += 1
+                    self.last_io_s = time.monotonic()-started
+                    self.io_stage = 'idle'
+                    self.io_started_monotonic_s = None
                 self.last_error = None
             except Exception as exc:
+                self.last_io_s = time.monotonic()-started
                 self.errors += 1
                 self.last_error = str(exc)
-                log.exception("GELLO sample failed on %s", self.mapper.config.port)
                 if self.damping_config is not None:
                     self.stop.set()
                     self.failure_stop.set()
+                    with self.lock:
+                        self.latest = None
+                        self.feedback_current.fill(0.)
+                        self.current_command.fill(0.)
+                        self.feedback_valid = False
+                        self.io_stage = 'failed'
+                        self.io_started_monotonic_s = None
+                    log.exception("GELLO sample failed on %s", self.mapper.config.port)
+                    if self.feedback_worker is not None:
+                        try:
+                            self.feedback_worker.invalidate()
+                        except Exception:
+                            log.exception("Failed to invalidate GELLO force feedback")
                     try:
                         self.reader.disable_current_damping()
                     except Exception:
                         log.exception("Failed to release GELLO damping")
                     return
+                with self.lock:
+                    self.io_stage = 'failed'
+                    self.io_started_monotonic_s = None
+                log.exception("GELLO sample failed on %s", self.mapper.config.port)
             next_t += self.period_s
-            self.stop.wait(max(0.0, next_t - time.monotonic()))
-            if time.monotonic() - started > max(self.period_s * 3, self.mapper.config.watchdog_timeout):
-                next_t = time.monotonic()
+            now = time.monotonic()
+            if next_t < now:
+                # Start one fresh transaction now after an overrun. Waiting
+                # for another grid tick needlessly ages the last position;
+                # replaying missed transactions would flood the slow bus.
+                skipped = math.ceil((now-next_t) / self.period_s)
+                self.skipped_ticks += skipped
+                next_t = now
+            self.stop.wait(max(0.0, next_t - now))
 
 
 class _EncoderDampingMapper:
@@ -454,7 +470,8 @@ class DualGelloPipeline:
 
     def __init__(self, config_path: str | Path, *, arm_factory: Callable | None = None,
                  reader_factory: Callable | None = None, torque_plot_enabled: bool | None = None,
-                 active_arms: list[str] | None = None):
+                 active_arms: list[str] | None = None, feedback_predictor_factory=None,
+                 feedback_model_factory=None):
         self.config_path = Path(config_path).expanduser().resolve()
         self.raw = yaml.safe_load(self.config_path.read_text(encoding="utf-8")) or {}
         if active_arms is not None:
@@ -513,6 +530,27 @@ class DualGelloPipeline:
         self.sample_rate_hz = float(self.control.get("sample_rate_hz", 100.0))
         if not np.isfinite(self.sample_rate_hz) or self.sample_rate_hz <= 0:
             raise ValueError("control.sample_rate_hz must be positive")
+        self.control_deadline_policy = self.control.get('deadline_policy', 'strict')
+        if self.control_deadline_policy not in ('strict', 'skip'):
+            raise ValueError('control.deadline_policy must be strict or skip')
+        self.force_feedback = None
+        feedback_block = self.raw.get('force_feedback', {})
+        if not isinstance(feedback_block, dict) or type(feedback_block.get('enabled', False)) is not bool:
+            raise ValueError('force_feedback must be a mapping with a boolean enabled flag')
+        if feedback_block.get('enabled', False):
+            for side, _, leader in self.configs:
+                if len(leader.joint_ids) != 7 or not leader.damping_enabled or leader.damping_mode != 'current':
+                    raise ValueError('force_feedback requires seven-joint GELLO current damping enabled')
+                if self.raw.get('arms', {}).get(side, {}).get('feedback_signal', 'torque') != 'torque':
+                    raise ValueError('force_feedback requires arms feedback_signal: torque')
+            self.force_feedback = TauFreeFeedbackWorker(feedback_block, self.config_path, self.ARM_NAMES,
+                self.sample_rate_hz, predictor_factory=feedback_predictor_factory,
+                model_factory=feedback_model_factory)
+            if self.torque_visualizer is not None:
+                self.torque_visualizer.cfg['force_feedback_source'] = self.force_feedback.source
+                self.torque_visualizer.cfg['force_feedback_mean_windows'] = {
+                    side: settings.get('tau_ext_mean_window', 1)
+                    for side, settings in self.force_feedback.settings.items()}
         self.leader_max_age_s = float(self.control.get("leader_max_age_s", 0.15))
         self.leader_startup_timeout_s = float(self.control.get('leader_startup_timeout_s', 2.))
         if not np.isfinite(self.leader_startup_timeout_s) or self.leader_startup_timeout_s <= 0:
@@ -556,6 +594,10 @@ class DualGelloPipeline:
         self.control_error: BaseException | None = None
         self.queue_overflow = 0
         self.stale_count = 0
+        self.control_late_tick_count = 0
+        self.control_skipped_tick_count = 0
+        self.control_max_lateness_s = 0.
+        self._last_control_warning_t = float('-inf')
         self.sampling_late_tick_count = 0
         self.sampling_skipped_tick_count = 0
         self.sampling_max_lateness_s = 0.
@@ -569,10 +611,15 @@ class DualGelloPipeline:
         self.collection_config = self._make_collection_config()
         self.buffer: EpisodeBuffer | None = None
         self.recording = False
+        self.episode_confirmation_pending = False
+        self.episode_confirmation_buffer = None
         self.recording_segment_start_us = 0
         self.episode_save_executor = None
+        self.episode_save_process = EpisodeSaveProcess()
         self.pending_episode_saves = []
         self.failed_episode_saves = []
+        self.pending_episode_discards = []
+        self.failed_episode_discards = []
         self._next_episode_save_index = 0
         self.reference_capture_busy = False
         self.reference_publisher = ReferencePosePublisher(self.config_path, self.reference_pose_snapshot)
@@ -645,7 +692,7 @@ class DualGelloPipeline:
         cameras = tuple(_camera_config(item) for item in self.raw.get("cameras", [])
                         if item.get("enabled", True))
         return CollectionConfig(
-            teleop=TeleopConfig(master_slave=tuple(pairs), command=CommandConfig(control_mode="position", sample_rate_hz=self.sample_rate_hz)),
+            teleop=TeleopConfig(backend="xarm", master_slave=tuple(pairs), command=CommandConfig(control_mode="position", sample_rate_hz=self.sample_rate_hz)),
             output=OutputConfig(directory=output_dir, prefix=str(output_raw.get("prefix", "episode")),
                                 discard_initial_s=float(output_raw.get("discard_initial_s", 0.0)),
                                 camera_compression=output_raw.get('camera_compression')),
@@ -656,6 +703,12 @@ class DualGelloPipeline:
     def connect(self):
         if self.state != "disconnected":
             raise RuntimeError(f"connect is invalid in state {self.state}")
+        if self.force_feedback is not None:
+            self.force_feedback.prepare()  # Prepare the selected torque model before enabling arms.
+        # Preload the spawned writer before enabling real robots. Starting a
+        # new Python interpreter while servoing also creates avoidable load.
+        if self._arm_factory == self._default_arm_factory:
+            self.episode_save_process.start()
         if self.torque_visualizer is not None:
             # Check the model and GUI before any hardware lifecycle begins.
             self.torque_visualizer.start()
@@ -670,6 +723,8 @@ class DualGelloPipeline:
             arm.read_state()  # connection/feedback check before any motion
             if self.torque_visualizer is not None:
                 self.torque_visualizer.bind_payload_source(side, arm)
+            if self.force_feedback is not None:
+                self.force_feedback.bind_payload_source(side, arm)
             reader = self._reader_factory(leader)
             mapper = JointMapper(robot, leader)
             # Only saved calibration is accepted.  JointMapper.align uses it
@@ -1039,7 +1094,9 @@ class DualGelloPipeline:
             else:
                 self.damping_capabilities.append({"enabled": False})
             self.producers.append(_LeaderProducer(reader, mapper, 1.0 / float(mapper.config.fps),
-                                                 self.leader_stop, damping, failure_stop=self.stop_event))
+                                                 self.leader_stop, damping, failure_stop=self.stop_event,
+                                                 feedback_worker=self.force_feedback, feedback_index=i,
+                                                 feedback_active=self._force_feedback_active))
             self.producers[-1].start()
         self.wait_for_leader_samples(keys)
         # Keep the followers in their planned-position hold until leader I/O
@@ -1086,6 +1143,9 @@ class DualGelloPipeline:
                 worker.start()
         self.state = 'recording' if self.recording else 'following'
         self.follow_stop.clear()
+        if self.force_feedback is not None:
+            self.force_feedback.invalidate()
+            self.force_feedback.start()
         if self.sampling_thread is None:
             self.sampling_thread = threading.Thread(target=self._sampling_loop, name='teleop-data-100hz', daemon=True)
             self.sampling_thread.start()
@@ -1101,6 +1161,11 @@ class DualGelloPipeline:
                        'sequence': None if sample is None else sample.sequence,
                        'read_ms': round(producer.last_read_s*1000, 1),
                        'io_ms': round(producer.last_io_s*1000, 1),
+                       'io_stage': producer.io_stage,
+                       'in_flight_ms': None if (started := producer.io_started_monotonic_s) is None else
+                        round(max(0., now-started)*1000, 1),
+                       'completed_cycles': producer.sequence,
+                       'skipped_ticks': producer.skipped_ticks,
                        'errors': producer.errors, 'last_error': producer.last_error}
                 for side, producer in zip(self.ARM_NAMES, self.producers)}
 
@@ -1132,8 +1197,11 @@ class DualGelloPipeline:
     def start_episode(self):
         if self.recording:
             raise RuntimeError('An episode is already recording')
+        if self.episode_confirmation_pending:
+            raise RuntimeError('Confirm y/n for the previous episode before recording another')
         if self.state not in {'following', 'holding', 'aligning', 'aligned'} or self.sampling_thread is None:
             raise RuntimeError("r is only accepted after alignment and takeover")
+        self.episode_confirmation_pending = False
         self._drain_samples()
         # Drop camera frames queued before the operator pressed r; their
         # independent timestamps must not leak into this episode.
@@ -1160,6 +1228,8 @@ class DualGelloPipeline:
                                                                        for state in [p.snapshot() for p in self.state_producers]]})
         self.recording = True
         self.recording_started_t = time.monotonic()
+        if self.force_feedback is not None:
+            self.buffer.episode_metadata['force_feedback'] = self.force_feedback.metadata()
         self.recording_segment_start_us = now_us()
         if self.state == 'following':
             self.state = 'recording'
@@ -1174,6 +1244,8 @@ class DualGelloPipeline:
         if self.state not in {'following', 'recording'}:
             return
         self.follow_stop.set()
+        if self.force_feedback is not None:
+            self.force_feedback.invalidate()
         for worker in self.gripper_workers:
             with worker.lock:
                 pass  # wait for an in-flight gripper command; keep its feedback loop
@@ -1335,20 +1407,38 @@ class DualGelloPipeline:
                                         for side in self.ARM_NAMES})
 
     def _recording_key(self, key):
+        if getattr(self, 'episode_confirmation_pending', False):
+            if key in {'y', 'Y', 'n', 'N'}:
+                save = key in {'y', 'Y'}
+                if save:
+                    print('正在保存 episode（后台写入，遥操和预览继续）...', flush=True)
+                    self._save_frozen_episode(self.episode_confirmation_buffer, background=True)
+                else:
+                    self._discard_frozen_episode(self.episode_confirmation_buffer)
+                    print('已丢弃当前 episode；遥操和预览继续。', flush=True)
+                self.episode_confirmation_pending = False
+                self.episode_confirmation_buffer = None
+                return True
+            elif key in {'r', 'R', ' ', '\r', '\n'}:
+                print('等待确认：y 保存，n 丢弃；本集录制已停止，遥操和预览继续。', flush=True)
+                return True
         if key in {'r', 'R'}:
             if self.recording:
-                print('当前 episode 已在录制；Enter 或空格停止并保存。', flush=True)
+                print('当前 episode 已在录制；Enter 或空格后按 y 保存或 n 丢弃。', flush=True)
             elif self.state in {'following', 'holding'} or (
                     self.state in {'aligning', 'aligned'} and self.sampling_thread is not None):
                 self.start_episode()
-                print('episode 开始录制；Enter 或空格停止并保存。', flush=True)
+                print('episode 开始录制；Enter 或空格后按 y 保存或 n 丢弃。', flush=True)
             else:
                 print('请在启动接管完成后按 r 录制。', flush=True)
             return True
         if key in {' ', '\r', '\n'}:
             if self.recording:
-                print('停止录制，正在保存 episode（后台写入，遥操和预览继续）...', flush=True)
-                self.stop_episode(True, None, background=True)
+                self.stop_episode(False, None)
+                self.episode_confirmation_buffer = self.buffer
+                self.buffer = None
+                self.episode_confirmation_pending = True
+                print('本集录制已停止。保存当前 episode？y 保存，n 丢弃；遥操和预览继续。', flush=True)
             else:
                 print('停止录制：当前没有正在录制的 episode；按 r 开始录制。', flush=True)
             return True
@@ -1361,6 +1451,7 @@ class DualGelloPipeline:
     def stop_episode(self, save: bool, index: int | None = None, *, background=False) -> Path | None:
         if not self.recording:
             raise RuntimeError("no recording episode is active")
+        self.episode_confirmation_pending = False
         # Recording is independent of follower control, including F/T/O.
         self._consume_samples()
         self.recording = False
@@ -1372,6 +1463,10 @@ class DualGelloPipeline:
                 'recorded_sample_count': sample_count,
                 "actual_recorded_hz": self.buffer.sample_count / elapsed,
                 "control_tick_count": self.control_tick_count,
+                'control_deadline_policy': self.control_deadline_policy,
+                'control_late_tick_count': self.control_late_tick_count,
+                'control_skipped_tick_count': self.control_skipped_tick_count,
+                'control_max_lateness_s': self.control_max_lateness_s,
                 "gello_reader_errors": [producer.errors for producer in self.producers],
                 "xarm_state_reader_errors": [producer.errors for producer in self.state_producers],
                 "queue_overflow_count": self.queue_overflow,
@@ -1380,12 +1475,27 @@ class DualGelloPipeline:
                 'sampling_skipped_tick_count': self.sampling_skipped_tick_count,
                 'sampling_max_lateness_s': self.sampling_max_lateness_s,
             })
+            if self.force_feedback is not None:
+                self.buffer.episode_metadata['force_feedback'] = self.force_feedback.metadata()
         if self.state == 'recording':
             self.state = 'following'
-        if not save or self.buffer is None or self.buffer.sample_count == 0:
-            if save:
-                log.warning('episode 停止录制：长度 %.3f s，%d 个样本；无有效样本，未生成文件',
-                            elapsed, sample_count)
+        if not save:
+            if background:
+                self._discard_frozen_episode(self.buffer)
+                self.buffer = None
+            return None
+        return self._save_frozen_episode(self.buffer, index, background=background)
+
+    def _save_frozen_episode(self, frozen, index=None, *, background=False):
+        elapsed = frozen.episode_metadata.get('recorded_duration_s', 0.) if frozen is not None else 0.
+        sample_count = frozen.sample_count if frozen is not None else 0
+        if frozen is None or not sample_count:
+            log.warning('episode 停止录制：长度 %.3f s，%d 个样本；无有效样本，未生成文件',
+                        elapsed, sample_count)
+            if background and frozen is not None:
+                self._discard_frozen_episode(frozen)
+                if self.buffer is frozen:
+                    self.buffer = None
             return None
         output_dir = self.collection_config.output.directory
         if index is None:
@@ -1396,14 +1506,29 @@ class DualGelloPipeline:
         log.info('episode 停止录制：长度 %.3f s，%d 个样本；正在保存至 %s',
                  elapsed, sample_count, target.resolve())
         if not background:
-            return _save_episode_buffer(self.buffer, target)
+            return _save_episode_buffer(frozen, target)
         if self.episode_save_executor is None:
             self.episode_save_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='episode-save')
-        frozen = self.buffer
-        future = self.episode_save_executor.submit(_save_episode_buffer, frozen, target, release=True)
+        future = self.episode_save_executor.submit(_save_episode_buffer, frozen, target,
+                                                  release=True, writer=self.episode_save_process)
         self.pending_episode_saves.append((future, target))
-        self.buffer = None  # Further samples cannot mutate the saving episode.
+        if self.buffer is frozen:
+            self.buffer = None  # Further samples cannot mutate the saving episode.
         return target
+
+    def _discard_frozen_episode(self, frozen):
+        if frozen is None:
+            return
+        if self.episode_save_executor is None:
+            self.episode_save_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='episode-save')
+        self.pending_episode_discards.append(self.episode_save_executor.submit(_release_episode_buffer, frozen))
+
+    def _cancel_episode_confirmation(self):
+        frozen = getattr(self, 'episode_confirmation_buffer', None)
+        if frozen is not None:
+            self._discard_frozen_episode(frozen)
+        self.episode_confirmation_pending = False
+        self.episode_confirmation_buffer = None
 
     def _poll_episode_saves(self):
         pending = []
@@ -1418,9 +1543,21 @@ class DualGelloPipeline:
                 self.failed_episode_saves.append((future, target))
                 log.exception('episode 保存失败，保留内存数据，遥操继续；目标路径：%s', target)
         self.pending_episode_saves = pending
+        discards = []
+        for future in self.pending_episode_discards:
+            if not future.done():
+                discards.append(future)
+                continue
+            try:
+                future.result()
+            except Exception:
+                self.failed_episode_discards.append(future)
+                log.exception('episode 丢弃数据释放失败；遥操继续')
+        self.pending_episode_discards = discards
 
     def _control_loop(self):
-        ticker = FixedRateTicker(self.sample_rate_hz, float(self.control.get("maximum_lateness_s", 0.03)))
+        ticker = FixedRateTicker(self.sample_rate_hz, float(self.control.get("maximum_lateness_s", 0.03)),
+                                strict=self.control_deadline_policy == 'strict')
         try:
             self.control_started_t = time.monotonic()
             while not self.stop_event.is_set() and not self.follow_stop.is_set() and self.state in {"following", "recording"}:
@@ -1429,6 +1566,14 @@ class DualGelloPipeline:
                     break
                 self.control_tick_count += 1
                 now = time.monotonic()
+                self.control_skipped_tick_count += ticker.last_skipped_ticks
+                self.control_max_lateness_s = max(self.control_max_lateness_s, lateness)
+                if lateness > ticker.maximum_lateness_s:
+                    self.control_late_tick_count += 1
+                    if now-self._last_control_warning_t >= 1.:
+                        log.warning('运动控制延迟 %.1f ms，跳过 %d 个过期时刻；按当前时间重新检查目标',
+                                    lateness*1000., ticker.last_skipped_ticks)
+                        self._last_control_warning_t = now
                 dt = max(now - (self._last_control_t or now), 1e-4)
                 self._last_control_t = now
                 leaders = tuple(p.snapshot() for p in self.producers)
@@ -1489,8 +1634,6 @@ class DualGelloPipeline:
                 with self.raw_sample_lock:
                     raw_samples = list(self.raw_samples)
                 states = [producer.snapshot() for producer in self.state_producers]
-                if self.torque_visualizer is not None and all(s is not None for s in states):
-                    self.torque_visualizer.publish(self.ARM_NAMES, states)
                 if any(s is None for s in raw_samples+states):
                     continue
                 leaders = []
@@ -1533,6 +1676,18 @@ class DualGelloPipeline:
                                     np.asarray([g[3] for g in grippers], dtype=np.uint8),
                                     np.asarray([g[4] for g in grippers], dtype=np.int64),
                                     np.asarray([g[5] for g in grippers], dtype=np.int64))
+                tau_free_results = None
+                if self.force_feedback is not None:
+                    self.force_feedback.submit(row, self._force_feedback_active())
+                    tau_free_results = tuple(self.force_feedback.snapshot(i, row.timestamp_us)
+                                             for i in range(len(self.ARM_NAMES)))
+                    row = replace(row, force_feedback_values=self._force_feedback_values(
+                        row.timestamp_us, results=tau_free_results))
+                if self.torque_visualizer is not None:
+                    if self.force_feedback is not None and self.force_feedback.source == 'urdf':
+                        self.torque_visualizer.publish(self.ARM_NAMES, states, urdf_results=tau_free_results)
+                    else:
+                        self.torque_visualizer.publish(self.ARM_NAMES, states, tau_free_results=tau_free_results)
                 try:
                     self.sample_queue.put_nowait(row)
                 except queue.Full:
@@ -1594,6 +1749,10 @@ class DualGelloPipeline:
         self._poll_gripper_press_status()
         self._poll_reference_save()
         self._poll_episode_saves()
+        # A stopped GELLO reader can also expire the gripper target. Report
+        # the reader failure before errors caused by its missing samples.
+        if self.stop_event.is_set() and any(producer.last_error for producer in self.producers):
+            raise RuntimeError(f'GELLO I/O failed: {self.leader_sample_status()}')
         for worker in self.gripper_workers:
             if worker.error is not None:
                 raise RuntimeError(f'Gripper I/O failed: {worker.error}') from worker.error
@@ -1601,30 +1760,36 @@ class DualGelloPipeline:
             if isinstance(self.control_error, XArmControllerFault):
                 raise self.control_error
             raise RuntimeError(str(self.control_error)) from self.control_error
-        if self.stop_event.is_set() and any(producer.last_error for producer in self.producers):
-            raise RuntimeError(f'GELLO I/O failed: {self.leader_sample_status()}')
 
     def _values(self, sample: ControlSample):
         states = sample.follower_states
         leaders = sample.leader_samples
         q_follower = np.concatenate([s.q for s in states])
         q_cmd = sample.q_cmd.copy()
+        ee_poses = []
+        for state in states:
+            pose = np.asarray(state.ee_pose, dtype=np.float64)
+            if pose.shape != (4, 4) or not np.isfinite(pose).all():
+                pose = np.full((4, 4), np.nan, dtype=np.float64)
+            ee_poses.append(pose)
         values = {
             "q_follower": ("q", q_follower),
+            "ee_pose_follower": ("ee_pose", ee_poses[0].copy() if len(ee_poses) == 1
+                                 else np.stack(ee_poses)),
             "q_cmd": ("q", q_cmd),
             "delta_q": ("q_error", q_cmd - q_follower),
             "dq_follower": ("velocity", np.concatenate([s.dq for s in states])),
             "ddq_follower_raw": ("acceleration_raw", np.concatenate([s.ddq for s in states])),
             "ddq_follower": ("acceleration", sample.ddq_follower),
-            "dq_valid_follower": ("validity", np.asarray([all(s.dq_valid for s in states)], dtype=np.uint8)),
-            "ddq_valid_follower": ("validity", np.asarray([all(s.dq_valid for s in states)], dtype=np.uint8)),
+            "dq_valid_follower": ("validity", np.asarray([s.dq_valid for s in states], dtype=np.uint8)),
+            "ddq_valid_follower": ("validity", np.asarray([s.dq_valid for s in states], dtype=np.uint8)),
             "tau_follower": ("torque", np.concatenate([s.torque for s in states])),
             "current_follower": ("current", np.concatenate([s.current for s in states])),
-            "torque_valid_follower": ("validity", np.asarray([all(s.torque_valid for s in states)], dtype=np.uint8)),
-            "current_valid_follower": ("validity", np.asarray([all(s.current_valid for s in states)], dtype=np.uint8)),
+            "torque_valid_follower": ("validity", np.asarray([s.torque_valid for s in states], dtype=np.uint8)),
+            "current_valid_follower": ("validity", np.asarray([s.current_valid for s in states], dtype=np.uint8)),
             "q_leader_raw": ("q_raw", np.concatenate([s.raw for s in leaders])),
             "q_leader_mapped": ("q", np.concatenate([s.mapped for s in leaders])),
-            "q_leader_valid": ("validity", np.asarray([all(s.valid for s in leaders)], dtype=np.uint8)),
+            "q_leader_valid": ("validity", np.asarray([s.valid for s in leaders], dtype=np.uint8)),
             "q_leader_timestamp_us": ("timestamp", np.asarray([s.timestamp_us for s in leaders], dtype=np.int64)),
             "q_leader_acquired_timestamp_us": ("timestamp", np.asarray([s.acquired_timestamp_us for s in leaders], dtype=np.int64)),
             "q_leader_sequence": ("sequence", np.asarray([s.sequence for s in leaders], dtype=np.int64)),
@@ -1633,9 +1798,9 @@ class DualGelloPipeline:
             "q_follower_acquired_timestamp_us": ("timestamp", np.asarray([s.acquired_timestamp_us for s in states], dtype=np.int64)),
             "q_follower_sequence": ("sequence", np.asarray([max(0, p.sequence - 1) for p in self.state_producers], dtype=np.int64)),
             "q_follower_age_us": ("duration", np.asarray([max(0, sample.timestamp_us - int(getattr(s, "timestamp_us", sample.timestamp_us))) for s in states], dtype=np.int64)),
-            "q_follower_valid": ("validity", np.asarray([all(s.q_valid and sample.timestamp_us-
+            "q_follower_valid": ("validity", np.asarray([s.q_valid and sample.timestamp_us-
                 int(getattr(s, 'acquired_timestamp_us', 0) or s.timestamp_us) <= self.state_max_age_s*1e6
-                for s in states)], dtype=np.uint8)),
+                for s in states], dtype=np.uint8)),
             "q_follower_repeated": ("validity", sample.q_follower_repeated),
             "q_cmd_timestamp_us": ("timestamp", sample.q_cmd_timestamp_us),
             "q_cmd_send_ok": ("validity", sample.q_cmd_ok),
@@ -1649,6 +1814,40 @@ class DualGelloPipeline:
             "gripper_follower_timestamp_us": ("timestamp", sample.gripper_follower_timestamp_us),
             "gripper_leader_fraction": ("gripper_fraction", np.asarray([s.gripper_fraction for s in leaders])),
         }
+        if sample.force_feedback_values is not None:
+            values.update(sample.force_feedback_values)
+        return values
+
+    def _force_feedback_active(self):
+        return (self.state in {'following', 'recording'} and not self.follow_stop.is_set()
+                and not self.stop_event.is_set())
+
+    def _force_feedback_values(self, timestamp_us, *, results=None):
+        if results is None:
+            results = [self.force_feedback.snapshot(i, timestamp_us) for i in range(len(self.ARM_NAMES))]
+        currents = [producer.current_snapshot() for producer in self.producers]
+        values = {name: (state_name, np.concatenate([getattr(result, attr) for result in results]))
+                  for name, state_name, attr in (
+                      ('tau_free_pred', 'torque', 'tau_pred'),
+                      ('tau_feedback_measured', 'torque', 'tau_measured'))}
+        values.update({
+            # Record one scalar per arm from the same moving-mean residual used
+            # by GELLO, before thresholds, gain, or current limits are applied.
+            'tau_ext_l1': ('torque_norm', np.asarray([
+                np.sum(np.abs(r.tau_ext), dtype=np.float64)
+                if r.valid and np.shape(r.tau_ext) == (7,) and np.isfinite(r.tau_ext).all()
+                else np.nan for r in results], dtype=float)),
+            'tau_free_valid': ('validity', np.asarray([r.valid for r in results], np.uint8)),
+            'tau_free_source_timestamp_us': ('timestamp', np.asarray([r.source_timestamp_us for r in results], np.int64)),
+            'tau_free_sample_timestamp_us': ('timestamp', np.asarray([r.sample_timestamp_us for r in results], np.int64)),
+            'tau_free_age_us': ('duration', np.asarray([max(0, timestamp_us-r.source_timestamp_us) for r in results], np.int64)),
+            'gello_feedback_current': ('raw_current', np.concatenate([c[0] for c in currents])),
+            'gello_current_cmd': ('raw_current', np.concatenate([c[1] for c in currents])),
+            'gello_feedback_valid': ('validity', np.asarray([c[2] and r.valid and self._force_feedback_active()
+                for c, r in zip(currents, results)], np.uint8)),
+        })
+        if self.force_feedback.source == 'urdf':
+            values['tau_urdf'] = ('torque', np.concatenate([r.tau_pred for r in results]))
         return values
 
     def _drain_samples(self):
@@ -1662,6 +1861,8 @@ class DualGelloPipeline:
         """Stop all I/O workers and retain xArm enable during local hold."""
         success = True
         self.follow_stop.set()
+        if self.force_feedback is not None:
+            self.force_feedback.invalidate()
         self.stop_event.set()
         self.leader_stop.set()
         self.sampling_stop.set()
@@ -1679,6 +1880,8 @@ class DualGelloPipeline:
                     log.error('退出前工作线程未停止：%s', thread.name)
         if all(p.thread is None or not p.thread.is_alive() for p in self.alignment_damping_producers):
             self.alignment_damping_producers = []
+        if self.force_feedback is not None:
+            self.force_feedback.close()
         if hold_followers:
             for i, arm in enumerate(self.arms):
                 if not bool(getattr(arm, '_enabled', bool(self.command_history[i]))):
@@ -1743,6 +1946,7 @@ class DualGelloPipeline:
             return False
 
     def close(self):
+        self._cancel_episode_confirmation()
         if self.state == 'stopped':
             return
         try:
@@ -1776,10 +1980,11 @@ class DualGelloPipeline:
             self._poll_reference_save()
             self.reference_save_executor = None
         if self.episode_save_executor is not None:
-            log.info('设备已停止并关闭，等待后台 episode 保存完成。')
+            log.info('设备已停止并关闭，等待后台 episode 保存及数据释放完成。')
             self.episode_save_executor.shutdown(wait=True)
             self._poll_episode_saves()
             self.episode_save_executor = None
+        self.episode_save_process.close()
 
     def _calibration_snapshot(self, i):
         mapper = self.mappers[i]
@@ -1796,45 +2001,48 @@ class DualGelloPipeline:
             return "unavailable"
 
     def interactive(self, auto_save=False, reset_q=False):
-        with TerminalKeys() as keys:
-            if not keys.is_tty:
-                raise RuntimeError("interactive keyboard is unavailable; use --dry-run with mocks")
-            print('连接检查完成，所选 xArm 自动低速返回各自 reset_q。', flush=True)
-            self.reset(keys=keys)
-            self.wait_for_alignment(keys)
-            self.takeover()
-            print("遥操已接管；r 录制，Enter/空格停止保存；F 保持，o 复位，t 对齐接管；q/Ctrl+C 复位保持后退出。", flush=True)
-            if reset_q:
-                print('参考位姿模式：遥操到希望的位置后按 s，覆盖保存所选主从臂当前 q；无需 F 或 Enter，可重复保存。', flush=True)
-            while True:
-                self.poll()
-                key = keys.read_key(0.01)
-                if key in {"q", "Q", "\x03"}:
-                    break
-                if self._recording_key(key):
-                    continue
-                if key in {'s', 'S'}:
-                    if not reset_q:
-                        print('保存所选主从臂参考需启动时添加 --reset-q。', flush=True)
+        try:
+            with TerminalKeys() as keys:
+                if not keys.is_tty:
+                    raise RuntimeError("interactive keyboard is unavailable; use --dry-run with mocks")
+                print('连接检查完成，所选 xArm 自动低速返回各自 reset_q。', flush=True)
+                self.reset(keys=keys)
+                self.wait_for_alignment(keys)
+                self.takeover()
+                print("遥操已接管；r 录制，Enter/空格后 y 保存或 n 丢弃；F 保持，o 复位，t 对齐接管；q/Ctrl+C 复位保持后退出。", flush=True)
+                if reset_q:
+                    print('参考位姿模式：遥操到希望的位置后按 s，覆盖保存所选主从臂当前 q；无需 F 或 Enter，可重复保存。', flush=True)
+                while True:
+                    self.poll()
+                    key = keys.read_key(0.01)
+                    if key in {"q", "Q", "\x03"}:
+                        break
+                    if self._recording_key(key):
                         continue
-                    try:
-                        self.save_reference_pose()
-                    except (OSError, ValueError, RuntimeError, KeyError) as exc:
-                        print(f'所选主从臂参考未保存：{exc}；遥操继续。', flush=True)
-                    continue
-                if key in {'f', 'F'} and self.state in {'following', 'recording'}:
-                    self.freeze_following()
-                    print('xArm 已保持当前位置；GELLO 阻尼、录制状态保持不变；t 对齐后接管。', flush=True)
-                    continue
-                if key in {'o', 'O'} and self.state in {'following', 'recording', 'holding'}:
-                    self.reset_and_hold(keys)
-                    print('xArm 已复位；GELLO 和录制状态保持不变；按 t 对齐接管。', flush=True)
-                    continue
-                if key in {"t", "T"} and self.state == "holding":
-                    self.realign_and_takeover(keys)
-                    print('遥操已重新接管；录制持续进行。' if self.recording else
-                          '遥操已重新接管；按 r 开始新的 episode。', flush=True)
-                    continue
+                    if key in {'s', 'S'}:
+                        if not reset_q:
+                            print('保存所选主从臂参考需启动时添加 --reset-q。', flush=True)
+                            continue
+                        try:
+                            self.save_reference_pose()
+                        except (OSError, ValueError, RuntimeError, KeyError) as exc:
+                            print(f'所选主从臂参考未保存：{exc}；遥操继续。', flush=True)
+                        continue
+                    if key in {'f', 'F'} and self.state in {'following', 'recording'}:
+                        self.freeze_following()
+                        print('xArm 已保持当前位置；GELLO 阻尼、录制状态保持不变；t 对齐后接管。', flush=True)
+                        continue
+                    if key in {'o', 'O'} and self.state in {'following', 'recording', 'holding'}:
+                        self.reset_and_hold(keys)
+                        print('xArm 已复位；GELLO 和录制状态保持不变；按 t 对齐接管。', flush=True)
+                        continue
+                    if key in {"t", "T"} and self.state == "holding":
+                        self.realign_and_takeover(keys)
+                        print('遥操已重新接管；录制持续进行。' if self.recording else
+                              '遥操已重新接管；按 r 开始新的 episode。', flush=True)
+                        continue
+        finally:
+            self._cancel_episode_confirmation()
         return 0
 
 

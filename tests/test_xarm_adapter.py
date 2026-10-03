@@ -78,6 +78,93 @@ def test_connect_and_dry_run_have_no_motion_side_effects(adapter):
         adapter.enable()
 
 
+def test_stop_motion_requires_execution_and_retains_motor_enable(adapter):
+    with pytest.raises(RuntimeError, match="execution is disabled"):
+        adapter.stop_motion()
+    adapter.config.config_kwargs["execution_enabled"] = True
+    adapter.enable()
+    FakeArm.calls.clear()
+    adapter.stop_motion()
+    assert [call[0] for call in FakeArm.calls] == ["set_state"]
+    assert FakeArm.calls[0][1] == (4,)
+    assert adapter._enabled
+
+
+@pytest.mark.parametrize('rotation_vector', [
+    [0., 0., 0.],
+    [1.e-12, -2.e-12, 3.e-12],
+    [.4, -.7, 1.2],
+    [np.pi / np.sqrt(3)] * 3,
+    [0., 0., -np.pi / 2],
+])
+def test_ee_pose_uses_sdk_rotation_vector_and_one_pose_request(adapter, monkeypatch, rotation_vector):
+    from unittest.mock import Mock
+    from scipy.spatial.transform import Rotation
+    axis_angle = Mock(return_value=(0, [125., -250., 375., *rotation_vector]))
+    fallback = Mock(side_effect=AssertionError('successful axis-angle read must not add another RPC'))
+    monkeypatch.setattr(adapter._arm, 'get_position_aa', axis_angle)
+    monkeypatch.setattr(adapter._arm, 'get_position', fallback, raising=False)
+
+    pose = adapter.read_state().ee_pose
+
+    axis_angle.assert_called_once_with(is_radian=True)
+    fallback.assert_not_called()
+    np.testing.assert_array_equal(pose[:3, 3], [.125, -.250, .375])
+    np.testing.assert_array_equal(pose[3], [0., 0., 0., 1.])
+    np.testing.assert_allclose(pose[:3, :3], Rotation.from_rotvec(rotation_vector).as_matrix(),
+                               atol=1.e-15, rtol=1.e-14)
+    np.testing.assert_allclose(pose[:3, :3].T @ pose[:3, :3], np.eye(3), atol=1.e-15)
+    assert np.linalg.det(pose[:3, :3]) == pytest.approx(1.)
+
+
+def test_non_axis_aligned_ee_rotation_is_not_treated_as_roll_pitch_yaw(adapter, monkeypatch):
+    from nero_collection.arms.kinematics import pose6_to_matrix
+    # A 120-degree rotation around (1,1,1) cycles x -> y -> z -> x.
+    vector = np.full(3, 2. * np.pi / (3. * np.sqrt(3)))
+    monkeypatch.setattr(adapter._arm, 'get_position_aa', lambda **kwargs: (0, [0., 0., 0., *vector]))
+
+    pose = adapter.read_state().ee_pose
+
+    np.testing.assert_allclose(pose[:3, :3], [[0., 0., 1.], [1., 0., 0.], [0., 1., 0.]], atol=1.e-15)
+    assert not np.allclose(pose[:3, :3], pose6_to_matrix(np.r_[np.zeros(3), vector])[:3, :3])
+
+
+def test_ee_pose_euler_fallback_keeps_sdk_rpy_and_mm_to_m(adapter, monkeypatch):
+    from unittest.mock import Mock
+    from scipy.spatial.transform import Rotation
+    angles = [.4, -.7, 1.2]
+    fallback = Mock(return_value=(0, [125., -250., 375., *angles]))
+    monkeypatch.setattr(adapter._arm, 'get_position_aa', None)
+    monkeypatch.setattr(adapter._arm, 'get_position', fallback, raising=False)
+
+    pose = adapter.read_state().ee_pose
+
+    fallback.assert_called_once_with(is_radian=True)
+    np.testing.assert_array_equal(pose[:3, 3], [.125, -.250, .375])
+    np.testing.assert_allclose(pose[:3, :3], Rotation.from_euler('xyz', angles).as_matrix(), atol=1.e-15)
+    assert not np.allclose(pose[:3, :3], Rotation.from_rotvec(angles).as_matrix())
+
+
+@pytest.mark.parametrize('axis_angle', [True, False])
+def test_ee_pose_rejects_failed_sdk_report_even_with_cached_finite_pose(adapter, monkeypatch, axis_angle):
+    from unittest.mock import Mock
+    failed = Mock(return_value=(5, [100., 200., 300., .4, -.7, 1.2]))
+    if axis_angle:
+        monkeypatch.setattr(adapter._arm, 'get_position_aa', failed)
+        fallback = Mock(side_effect=AssertionError('failed pose read must not fetch an unrelated sample'))
+        monkeypatch.setattr(adapter._arm, 'get_position', fallback, raising=False)
+    else:
+        monkeypatch.setattr(adapter._arm, 'get_position_aa', None)
+        monkeypatch.setattr(adapter._arm, 'get_position', failed, raising=False)
+
+    with pytest.raises(RuntimeError, match='failed with code 5'):
+        adapter.read_state()
+
+    failed.assert_called_once_with(is_radian=True)
+    if axis_angle:
+        fallback.assert_not_called()
+
+
 def test_theoretical_only_state_requests_position_velocity_without_effort(adapter):
     from unittest.mock import Mock
     adapter._arm.get_joint_states = Mock(return_value=(0, [[0.0]*6, [0.1]*6]))
@@ -86,6 +173,104 @@ def test_theoretical_only_state_requests_position_velocity_without_effort(adapte
     assert state.dq_valid and not state.torque_valid and not state.current_valid
     np.testing.assert_allclose(state.dq, .1)
     assert np.isnan(state.torque).all()
+
+
+@pytest.mark.parametrize('signal', ['none', 'torque', 'current'])
+def test_joint_state_read_uses_one_reply_for_position_velocity_and_effort(adapter, monkeypatch, signal):
+    from unittest.mock import Mock
+    adapter.config.config_kwargs['feedback_signal'] = signal
+    q, dq, effort = np.full(6, .25), np.full(6, .1), np.full(6, 2.)
+    joint_states = Mock(return_value=(0, [q.tolist(), dq.tolist(), effort.tolist()]))
+    angles = Mock(side_effect=AssertionError('redundant angle transaction'))
+    pose = Mock(return_value=(0, [100., 200., 300., 0., 0., 0.]))
+    monkeypatch.setattr(adapter._arm, 'get_joint_states', joint_states)
+    monkeypatch.setattr(adapter._arm, 'get_servo_angle', angles)
+    monkeypatch.setattr(adapter._arm, 'get_position_aa', pose)
+    host_stamps = iter([100, 200])
+    monkeypatch.setattr('ufactory_devices.robot.xarm_adapter.now_us', lambda: next(host_stamps))
+
+    state = adapter.read_state()
+
+    joint_states.assert_called_once_with(is_radian=True, num=2 if signal == 'none' else 3)
+    angles.assert_not_called()
+    pose.assert_called_once_with(is_radian=True)
+    np.testing.assert_array_equal(state.q, q)
+    np.testing.assert_array_equal(state.dq, dq)
+    assert state.dq_valid
+    assert state.torque_valid == (signal == 'torque')
+    assert state.current_valid == (signal == 'current')
+    np.testing.assert_array_equal(state.torque if signal == 'torque' else state.current,
+                                  effort if signal != 'none' else np.full(6, np.nan))
+    assert state.acquired_timestamp_us == state.q_acquired_timestamp_us == 100
+    assert state.timestamp_us == state.q_timestamp_us == 200
+    assert state.timestamp_source == 'host_receive'
+    np.testing.assert_array_equal(state.q_component_timestamp_us, np.full(6, 200))
+
+
+@pytest.mark.parametrize('invalid_q', [None, [0.] * 5, [np.nan] * 6])
+def test_invalid_joint_state_position_falls_back_without_discarding_valid_feedback(adapter, monkeypatch, invalid_q):
+    from unittest.mock import Mock
+    adapter.config.config_kwargs['feedback_signal'] = 'torque'
+    joint_states = Mock(return_value=(0, [invalid_q, [.1] * 6, [2.] * 6]))
+    angles = Mock(return_value=(0, [.25] * 6))
+    monkeypatch.setattr(adapter._arm, 'get_joint_states', joint_states)
+    monkeypatch.setattr(adapter._arm, 'get_servo_angle', angles)
+    host_stamps = iter([100, 200, 300])
+    monkeypatch.setattr('ufactory_devices.robot.xarm_adapter.now_us', lambda: next(host_stamps))
+
+    state = adapter.read_state()
+
+    joint_states.assert_called_once_with(is_radian=True, num=3)
+    angles.assert_called_once_with(is_radian=True)
+    np.testing.assert_allclose(state.q, .25)
+    np.testing.assert_allclose(state.dq, .1)
+    np.testing.assert_allclose(state.torque, 2.)
+    assert state.dq_valid and state.torque_valid and not state.current_valid
+    assert state.acquired_timestamp_us == 100
+    assert state.q_timestamp_us == 300
+
+
+@pytest.mark.parametrize('reply', [None, (5, [[.9] * 6, [.2] * 6, [3.] * 6])])
+def test_unavailable_or_failed_joint_state_reply_uses_angle_fallback_with_invalid_feedback(adapter, monkeypatch, reply):
+    from unittest.mock import Mock
+    adapter.config.config_kwargs['feedback_signal'] = 'torque'
+    joint_states = None if reply is None else Mock(return_value=reply)
+    angles = Mock(return_value=(0, [.25] * 6))
+    monkeypatch.setattr(adapter._arm, 'get_joint_states', joint_states)
+    monkeypatch.setattr(adapter._arm, 'get_servo_angle', angles)
+
+    state = adapter.read_state()
+
+    angles.assert_called_once_with(is_radian=True)
+    np.testing.assert_allclose(state.q, .25)
+    assert not state.dq_valid and not state.torque_valid and not state.current_valid
+    assert np.isnan(state.torque).all() and np.isnan(state.current).all()
+
+
+def test_position_difference_velocity_reuses_the_selected_position_sample(adapter, monkeypatch):
+    from unittest.mock import Mock
+    adapter.config.config_kwargs['velocity_source'] = 'position_difference'
+    adapter._last_q, adapter._last_t = np.zeros(6), 10.
+    joint_states = Mock(return_value=(0, [[.4] * 6]))
+    angles = Mock(side_effect=AssertionError('velocity must use the same position sample'))
+    monkeypatch.setattr(adapter._arm, 'get_joint_states', joint_states)
+    monkeypatch.setattr(adapter._arm, 'get_servo_angle', angles)
+    monkeypatch.setattr('ufactory_devices.robot.xarm_adapter.time.monotonic', lambda: 12.)
+
+    state = adapter.read_state()
+
+    joint_states.assert_called_once_with(is_radian=True, num=2)
+    angles.assert_not_called()
+    np.testing.assert_allclose(state.q, .4)
+    np.testing.assert_allclose(state.dq, .2)
+    assert state.dq_valid
+
+
+def test_state_read_still_rejects_invalid_position_when_both_sources_fail(adapter, monkeypatch):
+    monkeypatch.setattr(adapter._arm, 'get_joint_states', lambda **kwargs: (5, []))
+    monkeypatch.setattr(adapter._arm, 'get_servo_angle', lambda **kwargs: (0, [np.nan] * 6))
+    with pytest.raises(RuntimeError, match='invalid joint-angle report'):
+        adapter.read_state()
 
 
 def test_tcp_payload_reads_report_cache_and_converts_mm_to_m(adapter):
@@ -409,7 +594,23 @@ def test_gripper_speed_is_applied_once_and_absolute_width_commands_remain_nonblo
     adapter.command_gripper(0., force_n=0.)
     adapter._arm.set_gripper_speed.assert_called_once_with(5000)
     assert [(call.args[0], call.kwargs) for call in adapter._arm.set_gripper_position.call_args_list] == [
-        (800, {'wait': False}), (400, {'wait': False}), (0, {'wait': False})]
+        (800, {'wait': False, 'wait_motion': False}),
+        (400, {'wait': False, 'wait_motion': False}),
+        (0, {'wait': False, 'wait_motion': False})]
+
+
+def test_streaming_gripper_skips_arm_wait_and_preserves_sdk_error_and_baud_checks(adapter, monkeypatch):
+    from unittest.mock import Mock
+    adapter.config.config_kwargs['execution_enabled'] = True
+    for name in ('set_gripper_enable', 'set_gripper_mode'):
+        monkeypatch.setattr(adapter._arm, name, Mock(return_value=0), raising=False)
+    def set_position(pos, *, wait=False, wait_motion=True, check_baud=True, check_err=True):
+        assert not wait and not wait_motion
+        assert check_baud and check_err
+        return 19
+    monkeypatch.setattr(adapter._arm, 'set_gripper_position', set_position, raising=False)
+    with pytest.raises(RuntimeError, match='set_gripper_position failed with code 19'):
+        adapter.command_gripper(.085, force_n=0.)
 
 
 @pytest.mark.parametrize('speed', [None, -1])

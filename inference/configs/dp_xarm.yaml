@@ -1,31 +1,23 @@
-# Independent DP entry point. Replace robot.urdf_path and the collection
-# profile before using an xArm; no Nero URDF or checkpoint is implicit here.
-dp_checkpoint:
-  path: ../../model/dp/pretrained_model-20260901T082955Z-1-001/pretrained_model
-  dino_model_path: null
+# xArm DP 关节推理：路径相对于本 YAML；可用 --checkpoint 指定其他权重。
+policy:
+  type: dp
+  checkpoint: ../../../diffusion_policy/data/outputs/2026.10.03/17.02.43_train_diffusion_transformer_erase_board_eepose_erase_board_eepose_image/checkpoints/latest.ckpt
   device: cuda:0
   use_ema: true
-
-action: joint  # matches the bundled checkpoint's action.joint contract; replace with an xArm-compatible checkpoint as needed
-architecture: {enabled: true, policy_type: lerobotdp, world_model_type: none}
-predictor: {enabled: false, mode: wrench_gru, inference_mode: asynchronous, action_chunk_mode: all, action_condition_fill: chunk, action_execution_mode: chunk, action_step_s: 0.04}
-execution: {mode: q, mtc_alpha: 1.0, mtc_q_cmd_source: wm_state}
-dp_sampling: {method: ddim, num_inference_steps: 8, use_tau_ext_observation: false}
-robot:
-  urdf_path: ../../urdf/xarm/REPLACE_WITH_MATCHING_XARM_URDF.urdf
-  frame_name: tcp
-  action_frame_name: tcp
-  locked_joint_names: []
-runtime:
-  collection_config: ../../configs/mock_collection.yaml
-  arm_pair: mock_arm
-  camera: null
-  maximum_state_age_s: 0.1
-  maximum_observation_alignment_gap_s: 0.03
-  maximum_inference_steps: 3000
-  command_kd: [0, 0, 0, 0, 0, 0, 0]
-observation_protection: {enabled: false, warmup_duration_s: 2.0, wrench_median_window: 1, wrench_lowpass_cutoff_hz: 5.0}
-safety: {maximum_action_translation_step_m: 0.05, maximum_action_rotation_step_rad: 0.5, maximum_target_force_n: 40.0, maximum_target_moment_nm: 5.0, maximum_command_torque_nm: 25.0, maximum_joint_position_step_rad: 0.1}
-timing: {enabled: true, report_interval_s: 1.0}
-wrench_visualization: {enabled: false, window_s: 10.0, update_rate_hz: 20.0}
-ik: {max_iterations: 100, position_tolerance_m: 0.0001, rotation_tolerance_rad: 0.001, damping: 0.001, step_gain: 1.0, maximum_iteration_step_rad: 0.2, joint_position_margin_rad: 0.02}
+  sampling_method: ddim
+  num_inference_steps: 8
+  torch_threads: 1
+# 复用 IP、active_arms、RGB 相机及有界位置控制参数；不连接 GELLO。
+hardware_config: ../../gello_teleop/config/xarm7_gello_dual_dataset.yaml
+active_arms: null  # null 沿用硬件配置；双臂 14 维按此列表顺序拆成两个 7 维 q
+observation:
+  camera_map: {}  # checkpoint key -> 硬件相机名称；默认移除 observation.images. 前缀
+  maximum_camera_age_s: 0.3
+  maximum_camera_skew_s: 0.06
+  maximum_state_age_s: 0.15
+  maximum_alignment_gap_s: 0.15
+execution:
+  control_hz: 100
+  action_rate_hz: null  # 自动读取训练 dataset meta/info.json 的 fps；不同于 control_hz
+  maximum_prediction_age_s: 1.0
+  startup_timeout_s: 15

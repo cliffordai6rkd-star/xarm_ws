@@ -40,12 +40,49 @@ _CURRENT_TABLE = {
 }
 
 # XL330 control-table maximum Current Limit, raw units (1 mA/unit).
-_ALIGNMENT_MAX_CURRENT = {1190: 1750, 1200: 1750}
+XL330_MAX_CURRENT_RAW = 1750
+_ALIGNMENT_MAX_CURRENT = {1190: XL330_MAX_CURRENT_RAW, 1200: XL330_MAX_CURRENT_RAW}
 
 
 def check(code, operation):
     if code != 0:
-        raise RuntimeError(f"{operation} failed (code={code})")
+        detail = {
+            -1000: 'COMM_PORT_BUSY',
+            -1001: 'COMM_TX_FAIL',
+            -1002: 'COMM_RX_FAIL',
+            -3001: 'COMM_RX_TIMEOUT: no complete status packet',
+            -3002: 'COMM_RX_CORRUPT: CRC error or incomplete status packet',
+        }.get(code)
+        suffix = f'; {detail}' if detail else ''
+        raise RuntimeError(f"{operation} failed (code={code}){suffix}")
+
+
+class _CooperativePortMixin:
+    """Yield while waiting for serial bytes without changing SDK packet checks."""
+
+    _read_wait_s = 0.001
+
+    def setupPort(self, *args, **kwargs):
+        opened = super().setupPort(*args, **kwargs)
+        if opened:
+            # The SDK uses timeout=0 and polls in Python until a packet arrives.
+            # A short pyserial wait releases the CPU/GIL, including on Windows.
+            # Apply it after every open, since setBaudRate reopens the port.
+            self.ser.timeout = self._read_wait_s
+        return opened
+
+    def readPort(self, length):
+        # Consume bytes already buffered immediately; wait at most 1 ms only
+        # when the buffer is empty. Partial reads are handled by the SDK.
+        available = self.ser.in_waiting
+        if length > 0 and available:
+            length = min(length, available)
+        return super().readPort(length)
+
+    def getCurrentTime(self):
+        # SDK packet deadlines use milliseconds. Wall-clock adjustments must
+        # not shorten or extend a receive deadline.
+        return time.monotonic() * 1000.0
 
 
 class GelloReader:
@@ -54,14 +91,19 @@ class GelloReader:
     def __init__(self, config):
         from dynamixel_sdk import PortHandler, PacketHandler, GroupSyncRead, GroupSyncWrite
 
+        class GelloPortHandler(_CooperativePortMixin, PortHandler):
+            pass
+
         class CheckedSyncRead(GroupSyncRead):
             def rxPacket(self):
                 # Upstream GroupSyncRead drops individual servo error bytes.
                 self.last_result = False
                 for motor_id in self.data_dict:
                     data, comm, error = self.ph.readRx(self.port, motor_id, self.data_length)
-                    check(comm, f'Dynamixel {motor_id} response')
-                    check(error, f'Dynamixel {motor_id} device error')
+                    context = (f'address={self.start_address}, length={self.data_length}, '
+                               f'port={config.port}')
+                    check(comm, f'Dynamixel {motor_id} response ({context})')
+                    check(error, f'Dynamixel {motor_id} device error ({context})')
                     self.data_dict[motor_id] = data
                 self.last_result = True
                 return 0
@@ -71,7 +113,7 @@ class GelloReader:
         if config.gripper_id >= 0:
             self.ids.append(config.gripper_id)
         self.ids.extend(config.torque_joint_ids or ())
-        self.port = PortHandler(config.port)
+        self.port = GelloPortHandler(config.port)
         self.packet = PacketHandler(2.0)
         self.held_ids = []
         self.lock = threading.Lock()

@@ -12,6 +12,11 @@ import numpy as np
 
 from nero_collection.config import CollectionConfig
 from nero_collection.coordinates import NERO_V120_MOTOR_VELOCITY_TO_JOINT_SIGN
+from nero_collection.h5_schema import (
+    DEVICE_SCHEMA_VERSION, SHARED_DATASETS, ensure_required_xarm_datasets,
+    ensure_xarm_eepose_datasets,
+    public_dataset_name,
+)
 from nero_collection.tau_ext_inference import OnlineTauExtInference
 from nero_collection.time_utils import now_us
 
@@ -81,6 +86,9 @@ FOLLOWER_TELEOP_DATASETS = frozenset(
         "model_observation_updated",
         "model_observation_timestamp_us",
         "model_prediction_age_us",
+        "tau_free_pred", "tau_urdf", "tau_feedback_measured", "tau_ext_raw", "tau_ext", "tau_ext_l1",
+        "tau_free_valid", "tau_free_source_timestamp_us", "tau_free_sample_timestamp_us",
+        "tau_free_age_us", "gello_feedback_current", "gello_current_cmd", "gello_feedback_valid",
     }
 )
 
@@ -88,6 +96,28 @@ _TIMING_DATASET_SOURCES = {
     "model_observation_timestamp_us": "causal_real_observation_selector",
     "model_prediction_age_us": "source_timestamp_minus_model_observation_timestamp",
 }
+
+# These channels carry one value per arm, rather than one value per joint.
+_PER_ARM_DATASETS = frozenset({
+    "dq_valid_follower", "dq_valid_leader", "ddq_valid_follower",
+    "torque_valid_follower", "torque_valid_leader",
+    "current_valid_follower", "current_valid_leader",
+    "q_leader_valid", "q_follower_valid", "q_follower_repeated",
+    "q_cmd_send_ok", "gripper_follower", "gripper_cmd",
+    "gripper_follower_valid", "gripper_cmd_valid", "gripper_leader_fraction",
+    "tau_free_valid", "tau_free_source_timestamp_us", "tau_free_sample_timestamp_us",
+    "tau_free_age_us", "gello_feedback_valid", "tau_ext_l1",
+}) | frozenset(
+    name for name in FOLLOWER_TELEOP_DATASETS
+    if name.startswith(("q_leader_", "q_follower_", "q_cmd_", "gripper_"))
+    and name.endswith(("timestamp_us", "sequence", "age_us"))
+)
+_SHARED_DATASETS = SHARED_DATASETS
+
+
+def arm_dataset_name(arm_name: str, dataset_name: str) -> str:
+    """Return the public arm-prefixed H5 channel name."""
+    return f"{arm_name}_{dataset_name}"
 
 
 @dataclass(frozen=True)
@@ -297,6 +327,19 @@ class EpisodeBuffer:
         tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
         string_dtype = h5py.string_dtype(encoding="utf-8")
         finalized_data, finalized_state_names, finalized_attrs = self._finalize_teleop_data()
+        output_rows = self._output_teleop_rows(finalized_data)
+        output_names = {(arm, name): output for name, output, arm, _ in output_rows}
+        device_schema = self._uses_device_schema()
+        if device_schema:
+            for arm in self.arm_names:
+                calibrated_name = (output_names.get((arm, "q_leader_mapped"))
+                                   or output_names.get((arm, "q_leader")))
+                if calibrated_name is not None:
+                    # Metadata can use either internal calibrated-position
+                    # spelling after equivalent inputs have been merged.
+                    output_names[(arm, "q_leader")] = calibrated_name
+                    output_names[(arm, "q_leader_mapped")] = calibrated_name
+        per_arm_layout = device_schema or len(self.arm_names) > 1
 
         with h5py.File(tmp_path, "w") as h5:
             h5.attrs["format"] = FORMAT_VERSION
@@ -306,17 +349,26 @@ class EpisodeBuffer:
             teleop = h5.create_group("teleop")
             teleop.attrs["arm_names"] = np.asarray(self.arm_names, dtype=string_dtype)
             teleop.attrs["data_role"] = "bilateral"
+            teleop.attrs["dataset_layout"] = (
+                "per_arm" if per_arm_layout else "concatenated"
+            )
+            if device_schema:
+                teleop.attrs["dataset_naming_schema"] = DEVICE_SCHEMA_VERSION
+                teleop.attrs["dataset_name_pattern"] = "{arm}_{quantity}_{device}"
+                teleop.attrs["dataset_name_exception"] = "shared timing channels are unprefixed"
             teleop.attrs["input_frame_count"] = self.input_frame_count
             teleop.attrs["duplicate_input_frame_count"] = self.duplicate_input_frame_count
             teleop.attrs["command_datasets"] = np.asarray(
                 tuple(
-                    name
-                    for name in ("q_cmd", "dq_cmd", "gripper_cmd")
-                    if name in finalized_data
+                    output_name
+                    for name, output_name, _, _ in output_rows
+                    if name in {"q_cmd", "dq_cmd", "gripper_cmd"}
                 ),
                 dtype=string_dtype,
             )
             teleop.attrs["joint_layout"] = (
+                "separate arm-prefixed datasets; J1..Jn per arm"
+                if per_arm_layout else
                 "follower joint vectors are concatenated in arm_names order"
             )
             teleop.attrs["clock"] = "unix_epoch timestamps; scheduling uses monotonic"
@@ -326,8 +378,8 @@ class EpisodeBuffer:
                 "stored separately when available"
             )
             teleop.attrs["pose_layout"] = (
-                "single follower: (N,4,4); multi follower: (N,A,4,4), "
-                "A follows arm_names"
+                "each arm pose: (N,4,4)"
+                if per_arm_layout else "single follower: (N,4,4)"
             )
             teleop_timestamp = teleop.create_dataset(
                 "timestamp_us",
@@ -336,19 +388,76 @@ class EpisodeBuffer:
             teleop_timestamp.attrs["source"] = "fixed_rate_robot_state_sample"
             teleop_timestamp.attrs["clock"] = "unix_epoch"
             teleop_timestamp.attrs["unit"] = "us"
-            for name, data in sorted(finalized_data.items()):
-                dataset = teleop.create_dataset(name, data=data, compression=_compression_for(data))
+            feedback_metadata = self.episode_metadata.get('force_feedback', {})
+            urdf_feedback = feedback_metadata.get('source') == 'urdf'
+            for name, output_name, arm_name, data in output_rows:
+                dataset = teleop.create_dataset(output_name, data=data, compression=_compression_for(data))
                 state_name = finalized_state_names.get(name, "")
                 dataset.attrs["state_name"] = state_name
                 # Collected signals are persisted exactly as received. Derived
                 # online inference outputs override these defaults below.
                 dataset.attrs["lowpass"] = False
                 dataset.attrs["median_window"] = 1
+                feedback_torques = {'tau_free_pred', 'tau_feedback_measured', 'tau_ext_raw', 'tau_ext', 'tau_ext_l1'}
+                if urdf_feedback:
+                    feedback_torques |= {'tau_urdf', 'tau_ext_cal'}
+                if name in feedback_torques:
+                    dataset.attrs['unit'] = 'Nm'
+                    dataset.attrs['validity_path'] = 'teleop/tau_free_valid'
+                    dataset.attrs['source_timestamp_path'] = 'teleop/tau_free_source_timestamp_us'
+                    dataset.attrs['model_sample_timestamp_path'] = 'teleop/tau_free_sample_timestamp_us'
+                    dataset.attrs['source'] = ('asynchronous_urdf_inverse_dynamics' if urdf_feedback
+                                               else 'asynchronous_tau_free_sequence_model')
+                if name in {'tau_ext', 'tau_ext_raw'}:
+                    dataset.attrs['definition'] = (
+                        ('moving_mean(tau_feedback_measured - tau_urdf) over distinct valid robot samples'
+                         if name == 'tau_ext' else 'raw measured tau - tau_urdf at model source sample')
+                        if urdf_feedback else
+                        ('tau_feedback_measured - tau_free_pred at model source sample'
+                         if name == 'tau_ext' else 'raw measured tau - tau_free_pred at model source sample'))
+                    dataset.attrs['prediction_path'] = 'teleop/tau_urdf' if urdf_feedback else 'teleop/tau_free_pred'
+                    if name == 'tau_ext':
+                        dataset.attrs['measured_torque_path'] = 'teleop/tau_feedback_measured'
+                        if urdf_feedback:
+                            side = arm_name or self.arm_names[0]
+                            settings = feedback_metadata.get('settings', {}).get(side, {})
+                            dataset.attrs['moving_average_window'] = settings.get('tau_ext_mean_window', 1)
+                            dataset.attrs['moving_average_requires_full_window'] = True
+                            dataset.attrs['unaveraged_residual_path'] = 'teleop/tau_ext_cal'
+                if name == 'tau_ext_l1':
+                    dataset.attrs['definition'] = (
+                        ('sum(abs(moving_mean(tau_feedback_measured - tau_urdf))) over J1..J7; '
+                         'per-joint moving mean precedes L1 reduction; '
+                         if urdf_feedback else 'sum(abs(tau_ext[j])) over J1..J7; ')
+                        + 'before feedback thresholds, gain, and current clipping'
+                    )
+                    dataset.attrs['input_signal'] = 'tau_ext'
+                    dataset.attrs['norm_order'] = 1
+                    dataset.attrs['joint_count'] = 7
+                    dataset.attrs['invalid_value'] = 'NaN'
+                    if urdf_feedback:
+                        side = arm_name or self.arm_names[0]
+                        settings = feedback_metadata.get('settings', {}).get(side, {})
+                        dataset.attrs['moving_average_window'] = settings.get('tau_ext_mean_window', 1)
+                        dataset.attrs['moving_average_requires_full_window'] = True
+                if urdf_feedback and name in {'tau_urdf', 'tau_free_pred', 'tau_ext_cal'}:
+                    dataset.attrs['definition'] = ('tau_feedback_measured - tau_urdf before moving mean'
+                                                   if name == 'tau_ext_cal' else 'RNEA(q, dq, filtered ddq) from URDF')
+                    if name == 'tau_free_pred':
+                        dataset.attrs['compatibility_alias_of'] = 'teleop/tau_urdf'
+                if name in {'tau_free_valid', 'gello_feedback_valid'}:
+                    dataset.attrs['unit'] = 'boolean'
+                if name in {'gello_feedback_current', 'gello_current_cmd'}:
+                    dataset.attrs['unit'] = 'raw_current'
+                    dataset.attrs['coordinate_frame'] = 'GELLO encoder coordinates'
+                    dataset.attrs['source'] = 'last_successful_GELLO_current_write'
                 if name == "ee_pose_follower":
                     frame_names = []
                     reference_frames = []
                     for pair in self.config.teleop.master_slave:
                         if pair.name not in self.arm_names:
+                            continue
+                        if arm_name is not None and pair.name != arm_name:
                             continue
                         frame_names.append(str(pair.follower.config_kwargs.get("tcp_frame", "tcp")))
                         reference_frames.append(str(pair.follower.config_kwargs.get("base_frame", "base")))
@@ -427,6 +536,36 @@ class EpisodeBuffer:
                     dataset.attrs["timestamp_path"] = "teleop/timestamp_us"
                 for key, value in finalized_attrs.get(name, {}).items():
                     dataset.attrs[key] = value
+                if arm_name is not None:
+                    dataset.attrs["arm_name"] = arm_name
+                    if device_schema:
+                        dataset.attrs["source_signal_name"] = name
+                        dataset.attrs["device_name"] = (
+                            "gello" if output_name.endswith("_gello") else "xarm"
+                        )
+                    dataset.attrs["joint_layout"] = "J1..Jn per arm"
+                    if name == 'tau_ext_l1':
+                        dataset.attrs['joint_layout'] = 'scalar L1 reduction over J1..J7 per arm'
+                    # Keep metadata references valid after renaming channels.
+                    for key, value in list(dataset.attrs.items()):
+                        if isinstance(value, str) and value.startswith("teleop/"):
+                            source_name = value.removeprefix("teleop/")
+                            referenced_name = output_names.get((arm_name, source_name)) or output_names.get((None, source_name))
+                            if referenced_name is not None:
+                                dataset.attrs[key] = f"teleop/{referenced_name}"
+                    if name == "delta_q":
+                        dataset.attrs["definition"] = (
+                            f"{self._public_output_name(arm_name, 'q_cmd')} - "
+                            f"{self._public_output_name(arm_name, 'q_follower')} at the same state sample"
+                        )
+
+            if device_schema:
+                ensure_required_xarm_datasets(
+                    teleop, self.arm_names, missing_context="not_collected_in_episode")
+                ensure_xarm_eepose_datasets(teleop, self.arm_names, {
+                    pair.name: pair.follower.config_kwargs
+                    for pair in self.config.teleop.master_slave
+                })
 
             if self.camera_frames:
                 cameras = h5.create_group("cameras")
@@ -484,6 +623,62 @@ class EpisodeBuffer:
         log.info('H5 写入完成：%.3f s，%.1f MiB，%s', time.monotonic()-started_t,
                  out_path.stat().st_size/(1024*1024), out_path)
         return out_path
+
+    def _output_teleop_rows(
+        self, data: dict[str, np.ndarray],
+    ) -> list[tuple[str, str, str | None, np.ndarray]]:
+        """Split only at persistence; control and online processing keep their layout."""
+        device_schema = self._uses_device_schema()
+        if device_schema and "q_leader" in data and "q_leader_mapped" in data:
+            # Both calibrated-position spellings refer to the same public
+            # channel. Reject conflicting inputs rather than silently dropping
+            # data or creating misleading duplicate datasets.
+            if not np.array_equal(data["q_leader"], data["q_leader_mapped"], equal_nan=True):
+                raise ValueError("q_leader and q_leader_mapped disagree for public q_gello channel")
+            data = {name: values for name, values in data.items() if name != "q_leader"}
+        if len(self.arm_names) <= 1:
+            if device_schema and self.arm_names:
+                arm = self.arm_names[0]
+                return [(name, name, None, values) if name in _SHARED_DATASETS else
+                        (name, public_dataset_name(arm, name), arm, values)
+                        for name, values in sorted(data.items())]
+            # Norm names always identify their arm, including single-arm runs.
+            # All other single-arm channels retain the existing public names.
+            return [(name, arm_dataset_name(self.arm_names[0], name), self.arm_names[0], values)
+                    if name == 'tau_ext_l1' and self.arm_names else (name, name, None, values)
+                    for name, values in sorted(data.items())]
+        pairs = {pair.name: pair for pair in self.config.teleop.master_slave}
+        widths = [
+            int(pairs[arm].follower.config_kwargs.get("dof", len(pairs[arm].follower.rest_q) or 7))
+            for arm in self.arm_names
+        ]
+        offsets = np.cumsum([0, *widths])
+        rows = []
+        for name, values in sorted(data.items()):
+            if name in _SHARED_DATASETS:
+                rows.append((name, name, None, values))
+                continue
+            for index, arm in enumerate(self.arm_names):
+                if name == "ee_pose_follower" and values.shape[1:] == (len(self.arm_names), 4, 4):
+                    selected = values[:, index]
+                elif name in _PER_ARM_DATASETS and values.ndim == 2 and values.shape[1] in {1, len(self.arm_names)}:
+                    column = index if values.shape[1] > 1 else 0
+                    selected = values[:, column:column + 1]
+                elif values.ndim == 2 and values.shape[1] == offsets[-1]:
+                    selected = values[:, offsets[index]:offsets[index + 1]]
+                else:
+                    raise ValueError(f"Cannot split dual-arm dataset {name} with shape {values.shape}")
+                rows.append((name, self._public_output_name(arm, name), arm, selected))
+        return rows
+
+    def _uses_device_schema(self) -> bool:
+        """Keep the existing Nero schema for collections with Nero hardware."""
+        return (self.config.teleop.backend.lower().replace("-", "_") == "xarm"
+                or self.episode_metadata.get("device_schema") == "gello_xarm")
+
+    def _public_output_name(self, arm_name: str, dataset_name: str) -> str:
+        return (public_dataset_name(arm_name, dataset_name) if self._uses_device_schema()
+                else arm_dataset_name(arm_name, dataset_name))
 
     def _finalize_teleop_data(
         self,

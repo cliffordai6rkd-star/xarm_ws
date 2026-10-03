@@ -7,7 +7,7 @@ gello_config: xarm7_gello_calibration.yaml
 torque_visualization:
   enabled: true
   urdf_path: ../models/xarm7_dynamics.urdf
-  measured_torque_cutoff_hz: 3.0  # 实测 tau 一阶低通截止频率，Hz
+  measured_torque_cutoff_hz: 3.0  # tau_ext_cal 的实测 tau 一阶低通，Hz；tau_ext_pred 沿用 force_feedback 滤波
   acceleration_cutoff_hz: 3.0  # 速度差分所得 ddq 一阶低通截止频率，Hz
   window_s: 30.0
   update_hz: 10.0
@@ -20,10 +20,10 @@ torque_visualization:
 gello_damping:
   enabled: true
   damping_mode: current
-  sample_rate_hz: 30  # 57600 baud 下主手读写频率；xArm 控制仍为 100 Hz
+  sample_rate_hz: 10  # 57600 baud 完整读写约 59 ms，留出通信余量；xArm 控制仍为 100 Hz
   damping_gain: [8, 8, 8, 8, 8, 8, 8]  # 原始电流 / (rad/s)
   damping_brake_gain: [8, 8, 8, 8, 8, 8, 8]
-  damping_current_limit: [20, 20, 15, 15, 15, 15, 15]
+  damping_current_limit: [1000,1500,1500,1000,1000,1200,1000]
   damping_velocity_threshold: 0.5  # rad/s，超过后增加阻力，不是硬限速
   damping_velocity_filter_alpha: 0.35
   damping_watchdog_ms: 500
@@ -31,7 +31,31 @@ gello_damping:
   weak_hold_gain: [0, 0, 0, 0, 0, 0, 0]
   weak_hold_limit: [5, 5, 5, 5, 5, 5, 5]
   weak_hold_release_velocity: 0.08
-  sides: {}  # 可填 left/right 分别覆盖上面的设置
+  sides:
+    right:
+      sample_rate_hz: 12  # USB latency=1 ms；完整读写约 59 ms，83.3 ms 周期留出余量
+force_feedback:
+  enabled: true
+  source: urdf
+  urdf_path: ../models/xarm7_dynamics.urdf
+  measured_torque_cutoff_hz: 3.0  # 实测 tau_m 的一阶低通截止频率，Hz
+  acceleration_cutoff_hz: 3.0  # RNEA 输入 ddq 的一阶低通截止频率，Hz
+  tau_ext_mean_window: 20  # tau_m - tau_urdf 的滑动均值窗口；按新的有效 xArm 样本计数，1 为不平均
+  payload:
+    source: controller  # 使用 SDK 缓存中的 Studio 负载质量和法兰系质心
+  # tau_ext = mean(tau_m - RNEA(q,dq,ddq))；窗口满后，abs(tau_ext) > threshold_nm 才反馈。
+  threshold_nm: [2, 5.5, 1.5, 5.5, 2, 1.5, 1.0] # 接触触发阈值，J1..J7，Nm
+  gain_raw_per_nm: [5, 5, 5, 5, 5, 5, 5]  # 力反馈强度：GELLO 原始电流单位 / Nm
+  sign: [-1, -1, -1, -1, -1, -1, -1]  # 反馈方向；随后自动乘 GELLO 标定 joint_signs
+  # 占 XL330 最大原始电流 1750 的百分比，范围 0~100；这不是官方持续安全电流。
+  # round(百分比 * 1750 / 100)；以下仍对应 [20, 20, 15, 15, 15, 15, 15]。
+  current_limit_percent: [80, 80, 80, 80, 80, 80, 80]  # 与阻尼相加后仍受 damping_current_limit 限制
+  rate_limit_raw_s: 200  # 电流上升变化率；无效/低于阈值时立即归零
+  ramp_s: 0.05  # 每次恢复有效反馈后的渐入时间
+  maximum_age_s: 0.15  # 模型源状态超龄后只保留阻尼
+  maximum_sample_gap_s: 0.03  # 采样中断后清空滤波和均值窗口，重新等待窗口填满
+  sides: {}  # left/right 可覆盖模型、负载、滤波、窗口、threshold_nm、gain_raw_per_nm 等
+
 alignment:
   gello_hold_current_raw: 400  # 电流位置模式持续设置 Goal Current=80，非百分比
   gello_reset_steps: 15
@@ -53,7 +77,8 @@ control:
   state_max_age_s: 0.15
   ddq_filter_alpha: 1.0
   sample_queue_size: 256
-  maximum_lateness_s: 0.03
+  deadline_policy: skip  # skip: 延迟后跳过过期指令，按当前时间继续；strict: 超时立即停止
+  maximum_lateness_s: 0.03  # skip 模式的警告阈值；strict 模式的停止阈值
   position_mode: second_order
   # 逐轴参考轨迹增益，数组顺序 J1..J7；左右臂共用，非电机力矩增益
   kp: [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0]
@@ -69,7 +94,7 @@ arms:
   left:
     execution_enabled: true
     servo_mode: 1
-    feedback_signal: torque  # 实测 / URDF 并排可视化；不将该力矩用于遥操控制
+    feedback_signal: torque  # 实测力矩：用于可视化和 tau_free 外力矩反馈
     velocity_source: hardware
     gripper_speed: 5000  # G1 硬件速度（r/min），初始化时下发；-1 保留控制器设置
     gripper_open_position: 800
@@ -95,7 +120,7 @@ gripper:
   sample_rate_hz: 20.0
   max_speed_m_s: 0.02  # 仅 control_mode: rate_limited_position 时生效
 require_cameras: true
-# cameras:
+cameras:
 # - name: 'front'
 #   backend: realsense
 #   serial_number: '262722072129'
@@ -105,27 +130,27 @@ require_cameras: true
 #   output_size: [224, 224]  # 保存 RGB/深度的尺寸；相机采集仍为 640x480@30 Hz
 #   depth: true
 #   visualize: true  
-# - name: 'left wrist'
-#   backend: realsense
-#   serial_number: '419122271564'
-#   width: 640
-#   height: 480
-#   fps: 30
-#   output_size: [224, 224]  # 保存 RGB/深度的尺寸；相机采集仍为 640x480@30 Hz
-#   depth: true
-#   visualize: true  # 所有启用的视角拼接到同一个预览窗口
-# - name: 'right wrist'
-#   backend: realsense
-#   serial_number: '419122270270'
-#   width: 640
-#   height: 480
-#   fps: 30
-#   output_size: [224, 224]  # 保存 RGB/深度的尺寸；相机采集仍为 640x480@30 Hz
-#   depth: true
-#   visualize: true
+- name: 'right_wrist'
+  backend: realsense
+  serial_number: '419122271564'
+  width: 640
+  height: 480
+  fps: 30
+  output_size: [224, 224]  # 保存 RGB/深度的尺寸；相机采集仍为 640x480@30 Hz
+  depth: false
+  visualize: true  # 所有启用的视角拼接到同一个预览窗口
+- name: "left_wrist"
+  backend: realsense
+  serial_number: '419122270270'
+  width: 640
+  height: 480
+  fps: 30
+  output_size: [224, 224]  # 保存 RGB/深度的尺寸；相机采集仍为 640x480@30 Hz
+  depth: false
+  visualize: true
 output:
   camera_compression: null  # 缩放后的原始数组直接写 H5，不做 gzip/视频编码
-  directory: ../../runs/wipe_board_rightarm
+  directory: ../../runs/wipe_vase
   prefix: dual_gello_xarm
   discard_initial_s: 0.0
 gello_template: xarm7_gello_teleop_dual.yaml

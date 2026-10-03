@@ -55,6 +55,12 @@ class DiffusionPolicy:
         self._history: dict[str, deque[np.ndarray]] = {
             key: deque(maxlen=self.n_obs_steps) for key in self.image_keys
         }
+        self.low_dim_shapes = {
+            key: tuple(shape) for key, shape in
+            getattr(getattr(model, "obs_encoder", None), "key_shape_map", {}).items()
+            if key not in self.image_keys
+        }
+        self._state_history = {key: deque(maxlen=self.n_obs_steps) for key in self.low_dim_shapes}
         self._last_timestamp_us: int | None = None
         self._started = False
 
@@ -169,10 +175,23 @@ class DiffusionPolicy:
     def reset_episode(self) -> None:
         for history in self._history.values():
             history.clear()
+        for history in self._state_history.values():
+            history.clear()
         self._last_timestamp_us = None
         reset = getattr(self.model, "reset", None)
         if callable(reset):
             reset()
+
+    def predict_observations(self, observations) -> ActionChunk:
+        """Use an acquisition-time window even when inference skips camera frames."""
+        if not observations:
+            raise ValueError("DP observation window is empty")
+        for history in (*self._history.values(), *self._state_history.values()):
+            history.clear()
+        self._last_timestamp_us = None
+        for observation in observations[-self.n_obs_steps:]:
+            self._append_images(observation)
+        return self.predict(observations[-1])
 
     def predict(self, observation: Observation) -> ActionChunk:
         """Append one aligned observation and return the next action chunk."""
@@ -223,6 +242,19 @@ class DiffusionPolicy:
             )
         for key in self.image_keys:
             self._history[key].append(self._prepare_image(observation.images[key], key))
+        state = observation.metadata.get("policy_state", {})
+        aliases = {"observation.joint": "q", "observation.state": "q", "qpos": "q",
+                   "observation.velocity": "dq", "observation.torque": "tau"}
+        for key, shape in self.low_dim_shapes.items():
+            value = state.get(key)
+            if value is None and key in aliases:
+                value = getattr(observation, aliases[key], None)
+            if value is None:
+                raise KeyError(f"DP missing low-dimensional observation {key!r}")
+            value = np.asarray(value, dtype=np.float32)
+            if value.shape != shape or not np.isfinite(value).all():
+                raise ValueError(f"DP {key} expected finite shape {shape}, got {value.shape}")
+            self._state_history[key].append(value.copy())
         self._last_timestamp_us = observation.timestamp_us
 
     def _build_model_input(self) -> dict[str, Any]:
@@ -230,7 +262,7 @@ class DiffusionPolicy:
         # first tick, repeat the first frame to match dataset pad_before=1.
         return {
             key: self._stack_history(history)
-            for key, history in self._history.items()
+            for key, history in {**self._history, **self._state_history}.items()
         }
 
     def _stack_history(self, history: deque[np.ndarray]) -> Any:
