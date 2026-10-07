@@ -1,0 +1,5 @@
+# Remote pi0 joint/EEP-pose client. The openpi training/JAX environment stays on the server.
+# Official NumPy codec is loaded from policy.client_source_path (no NumPy downgrade).
+# EEP-pose local IK additionally uses scipy and pin>=3,<4 (already in gello).
+websockets>=14,<16
+msgpack>=1.0.5,<2

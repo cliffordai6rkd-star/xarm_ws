@@ -1,15 +1,15 @@
 # xArm DP 关节推理：路径相对于本 YAML；可用 --checkpoint 指定其他权重。
 policy:
   type: dp
-  checkpoint: ../../../diffusion_policy/data/outputs/2026.10.03/17.02.43_train_diffusion_transformer_erase_board_eepose_erase_board_eepose_image/checkpoints/latest.ckpt
-  device: cuda:0
+  source_path: ../../../diffusion_policy
+  checkpoint: ../../model/dp/peel_cucumber/checkpoints-20261005T042624Z-1-001/checkpoints/epoch=0200.ckpt
   use_ema: true
   sampling_method: ddim
   num_inference_steps: 8
   torch_threads: 1
 # 复用 IP、active_arms、RGB 相机及有界位置控制参数；不连接 GELLO。
 hardware_config: ../../gello_teleop/config/xarm7_gello_dual_dataset.yaml
-active_arms: null  # null 沿用硬件配置；双臂 14 维按此列表顺序拆成两个 7 维 q
+active_arms: [right]  # 当前 checkpoint 输出右臂 7 维绝对关节角。
 observation:
   camera_map: {}  # checkpoint key -> 硬件相机名称；默认移除 observation.images. 前缀
   maximum_camera_age_s: 0.3
@@ -17,7 +17,13 @@ observation:
   maximum_state_age_s: 0.15
   maximum_alignment_gap_s: 0.15
 execution:
+  reset_on_start: true
+  # Initial/reset pose: joint1..joint7 in radians; also used when pressing i.
+  # Requires --enable-command to move. Omit a side to use hardware reset_q.
+  initial_q:
+    right: [0.0, 0.0, 0.0, 1.570796, 0.0, 1.570796, -1.570796]
   control_hz: 100
-  action_rate_hz: null  # 自动读取训练 dataset meta/info.json 的 fps；不同于 control_hz
-  maximum_prediction_age_s: 1.0
+  warmup_steps: 1  # 首轮预热输出丢弃；随后用新观测推理，不使能/发送预热动作
+  action_rate_hz: 25  # 训练动作频率；不同于 control_hz，且不依赖旧机器数据路径。
+  maximum_prediction_age_s: 1.0  # 从输入观测时间算起；预热耗时不作为真实动作放宽此限制
   startup_timeout_s: 15

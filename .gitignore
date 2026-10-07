@@ -222,3 +222,7 @@ episodes/
 gello_teleop/config/episodes/
 
 /runs
+
+# Weights & Biases local training logs and run artifacts
+wandb/
+*.wandb

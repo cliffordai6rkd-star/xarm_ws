@@ -289,6 +289,38 @@ class XArmAdapter:
         return self._configured_role
 
     def read_state(self) -> ArmState:
+        return self._read_state(include_ee_pose=True)
+
+    def read_joint_state(self) -> ArmState:
+        """Joint-only inference feedback; ee_pose is explicitly unavailable.
+
+        Collection still calls read_state() to obtain the measured TCP pose.
+        Avoid a second SDK transaction on the joint servo feedback path.
+        """
+        return self._read_state(include_ee_pose=False)
+
+    def read_controller_reference(self) -> tuple[np.ndarray, int]:
+        """Read controller-reported angles, not this client's last command cache.
+
+        This is the SDK's is_real=False GET_JOINT_POS path. Its reference
+        semantics must be distinguished from the host's last sent servo target.
+        No actuator command or mode change is issued.
+        """
+        result = self._call('get_servo_angle', is_radian=True, is_real=False, required=True)
+        self._check_result(result, 'get_servo_angle(is_real=False)')
+        values = _extract_vector(result, self.dof)
+        if values is None or not np.isfinite(values).all():
+            raise RuntimeError('Controller reference angles are unavailable')
+        return values.copy(), now_us()
+
+    def verify_torque_report(self) -> None:
+        """Read the effort selector without modifying another client's reports."""
+        result = self._call('get_report_tau_or_i', required=True)
+        self._check_result(result, 'get_report_tau_or_i')
+        if not isinstance(result, (list, tuple)) or len(result) < 2 or result[1] != 0:
+            raise RuntimeError('WM requires controller effort reports in torque mode (selector 0)')
+
+    def _read_state(self, *, include_ee_pose: bool) -> ArmState:
         arm = self._require_arm()
         acquired_us = now_us()
         read_wall = time.monotonic()
@@ -314,7 +346,7 @@ class XArmAdapter:
         if self._last_feedback_timestamp_us == timestamp_us:
             self._repeated_feedback += 1
         self._last_feedback_timestamp_us = timestamp_us
-        ee_pose = self._read_ee_pose(arm)
+        ee_pose = self._read_ee_pose(arm) if include_ee_pose else np.full((4, 4), np.nan)
         ddq = np.zeros(self.dof, dtype=np.float64)
         if self._last_dq is not None and dt is not None:
             ddq = (dq - self._last_dq) / dt

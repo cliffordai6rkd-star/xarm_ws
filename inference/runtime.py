@@ -12,6 +12,7 @@ from typing import Any, Callable
 import numpy as np
 
 from inference.config import InferenceConfig, resolve_camera_key
+from inference.interactive import InferenceCommand, decode_inference_key
 from inference.pipeline import NeroInferencePipeline, _CONTACT_WORLD_MODEL_MODES
 from inference.state_stream import (
     ContinuousInferenceSample,
@@ -282,6 +283,10 @@ class NeroInferenceRuntime:
                     for camera in collection.cameras
                     if str(camera.name) in checkpoint_camera_keys
                 )
+        runtime_camera_configs = tuple(
+            replace(camera, preview_output_size=(224, 224))
+            for camera in runtime_camera_configs
+        )
         self.cameras = cameras or CameraManager.from_config(
             runtime_camera_configs,
             visualizer=CameraVisualizer.from_config(runtime_camera_configs),
@@ -375,6 +380,9 @@ class NeroInferenceRuntime:
         self._last_state_consumer_lag_warning_s = 0.0
         self._last_stale_camera_warning_s = 0.0
         self._started = False
+        self._operator_paused = False
+        self._contact_reference_warmed_up = False
+        self._worker_stop_error = None
         self._episode_index = 0
         protection = config.observation_protection
         online_tau_ext_config = getattr(self.online_tau_ext, "config", None)
@@ -957,6 +965,7 @@ class NeroInferenceRuntime:
         return observation
 
     def _start_state_stream(self) -> None:
+        self._raise_if_worker_stop_failed()
         if self._continuous_state_stream_enabled:
             self._state_stream.clear()
             self._last_consumed_state_timestamp_us = 0
@@ -968,10 +977,13 @@ class NeroInferenceRuntime:
                 self._state_stream.poll_interval_s * 1.0e3,
             )
             self._state_stream.start()
-        if self._async_runtime is not None and not self._async_runtime.control_worker.running:
+        if (self._async_runtime is not None
+                and not getattr(self, "_operator_paused", False)
+                and not self._async_runtime.control_worker.running):
             self._async_runtime.start()
 
     def _stop_state_stream(self, *, clear: bool = False) -> None:
+        stop_error = None
         if self._async_runtime is not None:
             plans = self.action_plan_buffer.snapshot()
             segments = self.wm_target_buffer.snapshot()
@@ -1029,19 +1041,53 @@ class NeroInferenceRuntime:
                     ),
                     control_finite,
                 )
-            self._async_runtime.stop()
+            previous_error = getattr(self, "_worker_stop_error", None)
+            if previous_error is not None and not self._async_workers_stopped():
+                # All workers already received a stop request. Do not repeat a
+                # timed-out join before completing hardware/resource cleanup.
+                stop_error = previous_error
+            else:
+                try:
+                    self._async_runtime.stop()
+                except Exception as exc:
+                    self._worker_stop_error = exc
+                    stop_error = exc
         if self._continuous_state_stream_enabled:
-            self._state_stream.stop()
-            if clear:
-                self._state_stream.clear()
+            try:
+                self._state_stream.stop()
+            except Exception as exc:
+                stop_error = stop_error or exc
+            finally:
+                if clear:
+                    self._state_stream.clear()
             self._last_consumed_state_timestamp_us = 0
             self._last_state_stream_rollover_count = self._state_stream.history_rollover_count
         if clear:
             self.state_history_buffer.clear()
             self.action_plan_buffer.clear()
             self.wm_target_buffer.clear()
+        if stop_error is not None:
+            raise stop_error
+
+    def _async_workers_stopped(self) -> bool:
+        return self._async_runtime is None or not any(
+            worker is not None and worker.running for worker in (
+                self._async_runtime.dp_worker,
+                self._async_runtime.wm_worker,
+                self._async_runtime.control_worker,
+            )
+        )
+
+    def _control_worker_stopped(self) -> bool:
+        return self._async_runtime is None or not self._async_runtime.control_worker.running
+
+    def _raise_if_worker_stop_failed(self) -> None:
+        error = getattr(self, "_worker_stop_error", None)
+        if error is not None:
+            raise RuntimeError("inference worker shutdown failed; create a new runtime before restarting") from error
 
     def start(self) -> None:
+        self._raise_if_worker_stop_failed()
         if self._started:
             return
         self.arm.connect()
@@ -1052,7 +1098,8 @@ class NeroInferenceRuntime:
                 self._reset_arm_to_rest("startup")
             else:
                 self._wait_for_finite_arm_state()
-            if self.command_enabled and not self.config.observation_protection.enabled:
+            if (self.command_enabled and not getattr(self, "_operator_paused", False)
+                    and not self.config.observation_protection.enabled):
                 self._prepare_inference_control_mode()
                 self._inference_control_mode_ready = True
             initial_state = self._wait_for_finite_arm_state()
@@ -1083,25 +1130,19 @@ class NeroInferenceRuntime:
                 self.pipeline.reset()
                 self._observation_sampler.reset_episode()
             self._reset_observation_protection()
-            if self._timestamp_async_enabled and self.config.predictor.enabled:
-                warm_up = getattr(self.pipeline, "warm_up_contact_reference", None)
-                if callable(warm_up):
-                    warm_started = time.perf_counter()
-                    warm_up()
-                    log.info(
-                        "Contact WM CUDA warm-up complete in %.3fs (discarded output)",
-                        time.perf_counter() - warm_started,
-                    )
+            if not getattr(self, "_operator_paused", False):
+                self._warm_up_contact_reference()
             self._start_state_stream()
             self._started = True
         except BaseException:
-            self._stop_state_stream(clear=True)
-            self.cameras.stop()
-            self.wrench_plotter.close()
-            self.tau_ext_plotter.close()
-            self.mujoco_visualizer.close()
+            shutdown_error = None
+            try:
+                self._stop_state_stream(clear=True)
+            except Exception as exc:
+                shutdown_error = exc
+                log.exception("inference workers did not stop during startup cleanup")
             recovered = False
-            if self.command_enabled:
+            if self.command_enabled and shutdown_error is None and self._control_worker_stopped():
                 try:
                     self._reset_arm_to_rest("startup exception")
                     recovered = True
@@ -1111,15 +1152,17 @@ class NeroInferenceRuntime:
                     )
                 except Exception:
                     log.exception("arm reset failed after inference startup exception")
-            if self.command_enabled and not recovered:
+            if self.command_enabled and not recovered and self._control_worker_stopped():
                 self._best_effort_follower_enabled_hold(
                     allow_position_hold=True,
                 )
-            self.arm.disconnect()
+            # Startup may have opened only some resources; stop() closes each
+            # independently and never closes models still owned by live workers.
+            self._started = True
             try:
-                self._close_model_pipeline()
+                self.stop(preserve_arm_enabled=self.command_enabled)
             except Exception as exc:
-                log.warning("pipeline close failed after startup exception: %s", exc)
+                log.warning("inference cleanup failed after startup exception: %s", exc)
             raise
 
     def run(
@@ -1128,13 +1171,18 @@ class NeroInferenceRuntime:
         *,
         read_key: Callable[[float], str | None] | None = None,
         single_step: bool = False,
+        start_paused: bool = False,
     ) -> int:
         manual_step = bool(single_step)
+        paused = bool(start_paused or single_step)
+        self._operator_paused = paused
         step_requested = False
         if self._async_runtime is not None:
-            self._async_runtime.control_worker.set_manual_mode(manual_step)
+            self._async_runtime.control_worker.set_manual_mode(paused or manual_step)
         if not self._started:
             self.start()
+        elif paused:
+            self._pause_inference()
         started_s = time.perf_counter()
         total_cycles = 0
         episode_steps = 0
@@ -1143,6 +1191,7 @@ class NeroInferenceRuntime:
         # state/image sample is available. This makes one ``s`` correspond to
         # exactly one pipeline control cycle even when cameras or CAN lag.
         async_cycle_base = 0
+        single_cycle_base = 0
         final_reset_succeeded = False
         failed = False
         log.info(
@@ -1153,36 +1202,52 @@ class NeroInferenceRuntime:
         try:
             while duration_s is None or time.perf_counter() - started_s < duration_s:
                 key = read_key(0.0) if read_key is not None else None
-                if key in {"q", "Q", "\x03"}:
+                command = decode_inference_key(key, single_step=single_step)
+                if command is InferenceCommand.EXIT:
                     log.info("inference quit requested by keyboard")
                     break
-                if key in {"i", "I"}:
+                if command is InferenceCommand.STOP_RESET:
                     log.info(
                         "ending inference episode %d at step %d: keyboard i",
                         self._episode_index,
                         episode_steps,
                     )
-                    self._restart_episode()
-                    self._episode_index += 1
-                    episode_steps = 0
-                    log.info("inference episode %d started", self._episode_index)
-                    continue
-                if key in {"s", "S"}:
-                    manual_step = True
-                    step_requested = True
+                    self._operator_paused = True
                     if self._async_runtime is not None:
                         self._async_runtime.control_worker.set_manual_mode(True)
-                        self._async_runtime.control_worker.request_step()
-                    log.info(
-                        "single-step requested; press s for the next control cycle "
-                        "or c to resume continuous inference"
-                    )
-                elif key in {"c", "C"}:
-                    manual_step = False
+                    self._restart_episode()
+                    paused = True
+                    manual_step = bool(single_step)
                     step_requested = False
                     if self._async_runtime is not None:
-                        self._async_runtime.control_worker.set_manual_mode(False)
-                    log.info("continuous inference resumed")
+                        async_cycle_base = self._async_runtime.cycles
+                    self._episode_index += 1
+                    episode_steps = 0
+                    log.info("inference episode %d reset; press s to start", self._episode_index)
+                    continue
+                if command is InferenceCommand.PAUSE:
+                    if not paused:
+                        self._pause_inference()
+                    paused = True
+                    step_requested = False
+                    log.info("inference paused; press s to start")
+                elif command in {InferenceCommand.START, InferenceCommand.SINGLE_STEP}:
+                    manual_step = command is InferenceCommand.SINGLE_STEP
+                    step_requested = manual_step
+                    if self._async_runtime is not None:
+                        single_cycle_base = self._async_runtime.cycles
+                        self._async_runtime.control_worker.set_manual_mode(manual_step)
+                        if manual_step:
+                            self._async_runtime.control_worker.request_step()
+                    if paused:
+                        self._resume_inference()
+                    paused = False
+                    log.info("single-step requested" if manual_step else "continuous inference resumed")
+                if paused:
+                    # Keep sensing active while model/control workers are stopped.
+                    self.cameras.poll()
+                    time.sleep(0.005)
+                    continue
                 if self._timestamp_async_enabled:
                     assert self._async_runtime is not None
                     for worker in (
@@ -1202,6 +1267,10 @@ class NeroInferenceRuntime:
                             ) from fault
                     total_cycles = self._async_runtime.cycles
                     episode_steps = total_cycles - async_cycle_base
+                    if manual_step and step_requested and total_cycles > single_cycle_base:
+                        self._pause_inference()
+                        paused = True
+                        step_requested = False
                     maximum_steps = self.config.runtime.maximum_inference_steps
                     if maximum_steps is not None and episode_steps >= maximum_steps:
                         log.info(
@@ -1231,6 +1300,8 @@ class NeroInferenceRuntime:
                 episode_steps += 1
                 if manual_step:
                     step_requested = False
+                    self._pause_inference()
+                    paused = True
                 maximum_steps = self.config.runtime.maximum_inference_steps
                 if maximum_steps is not None and episode_steps >= maximum_steps:
                     log.info(
@@ -1254,40 +1325,87 @@ class NeroInferenceRuntime:
         finally:
             # Do not feed reset/episode-shutdown motion into the recurrent
             # estimator or the wrench visualization.
-            self._stop_state_stream(clear=True)
-            if self._started and self.command_enabled:
-                try:
-                    reason = "exception recovery" if failed else "shutdown"
-                    self._reset_arm_to_rest(reason)
-                    final_reset_succeeded = True
-                    if failed:
-                        log.info(
-                            "exception recovery reset complete; arm remains enabled "
-                            "in follower mode"
+            shutdown_error = None
+            try:
+                self._stop_state_stream(clear=True)
+            except Exception as exc:
+                shutdown_error = exc
+                log.exception("inference worker shutdown failed; finishing resource cleanup")
+            if self._started and self.command_enabled and self._control_worker_stopped():
+                if shutdown_error is not None:
+                    self._best_effort_follower_enabled_hold(allow_position_hold=True)
+                else:
+                    try:
+                        reason = "exception recovery" if failed else "shutdown"
+                        self._reset_arm_to_rest(reason)
+                        final_reset_succeeded = True
+                        if failed:
+                            log.info(
+                                "exception recovery reset complete; arm remains enabled "
+                                "in follower mode"
+                            )
+                        else:
+                            log.info(
+                                "final reset complete; arm remains enabled in follower mode"
+                            )
+                    except Exception:
+                        log.exception(
+                            "final reset failed; preserving follower enabled state "
+                            "without disabling"
                         )
-                    else:
-                        log.info(
-                            "final reset complete; arm remains enabled in follower mode"
-                        )
-                except Exception:
-                    log.exception(
-                        "final reset failed; preserving follower enabled state "
-                        "without disabling"
-                    )
-                    self._best_effort_follower_enabled_hold(
-                        allow_position_hold=True,
-                    )
-            if self._started:
+                        self._best_effort_follower_enabled_hold(allow_position_hold=True)
+            if self._started and shutdown_error is None:
                 try:
                     self._end_episode_state()
                 except Exception:
                     log.exception("failed to clear inference episode state during shutdown")
-            self.stop(
-                preserve_arm_enabled=(
-                    final_reset_succeeded or self.command_enabled or failed
-                ),
-            )
+            try:
+                self.stop(
+                    preserve_arm_enabled=(
+                        final_reset_succeeded or self.command_enabled or failed
+                    ),
+                )
+            except Exception as exc:
+                shutdown_error = shutdown_error or exc
+                log.exception("inference resource cleanup reported an error")
+            if shutdown_error is not None and not failed:
+                raise shutdown_error
         return total_cycles
+
+    def _warm_up_contact_reference(self) -> None:
+        if (getattr(self, "_contact_reference_warmed_up", False)
+                or not self._timestamp_async_enabled or not self.config.predictor.enabled):
+            return
+        warm_up = getattr(self.pipeline, "warm_up_contact_reference", None)
+        if callable(warm_up):
+            warm_started = time.perf_counter()
+            warm_up()
+            log.info("Contact WM CUDA warm-up complete in %.3fs (discarded output)",
+                     time.perf_counter() - warm_started)
+        self._contact_reference_warmed_up = True
+
+    def _resume_inference(self) -> None:
+        self._raise_if_worker_stop_failed()
+        self._operator_paused = False
+        self._warm_up_contact_reference()
+        if not self.config.observation_protection.enabled:
+            self._prepare_inference_control_mode()
+            self._inference_control_mode_ready = True
+        self._start_state_stream()
+
+    def _pause_inference(self) -> None:
+        self._operator_paused = True
+        if self._async_runtime is not None:
+            self._async_runtime.control_worker.set_manual_mode(True)
+        self._end_episode_state()
+        if self.command_enabled:
+            self.arm.set_follower_mode()
+            self.arm.enable()
+            state = self._wait_for_finite_arm_state()
+            self.arm.move_joints(np.asarray(state.q, dtype=np.float64).copy())
+        state = self._wait_for_finite_arm_state()
+        self._set_q_cmd(state.q, timestamp_us=now_us())
+        self._start_state_stream()
 
     def _restart_episode(self) -> None:
         self._end_episode_state()
@@ -1299,7 +1417,8 @@ class NeroInferenceRuntime:
         # fixed-rate stream.
         with self._q_cmd_lock:
             self._q_cmd_history.clear()
-        if not self.config.observation_protection.enabled:
+        if (not getattr(self, "_operator_paused", False)
+                and not self.config.observation_protection.enabled):
             self._prepare_inference_control_mode()
             self._inference_control_mode_ready = True
         state = self._wait_for_finite_arm_state()
@@ -1747,9 +1866,18 @@ class NeroInferenceRuntime:
 
     def stop(self, *, preserve_arm_enabled: bool = False) -> None:
         if not self._started:
-            self._close_model_pipeline()
+            if self._async_workers_stopped():
+                self._close_model_pipeline()
             return
+        cleanup_error = None
         try:
+            self._stop_state_stream(clear=True)
+        except Exception as exc:
+            cleanup_error = exc
+            if self.command_enabled and self._control_worker_stopped():
+                self._best_effort_follower_enabled_hold(allow_position_hold=True)
+            preserve_arm_enabled = True
+        if cleanup_error is None:
             if (
                 not self._modular_mode
                 and not preserve_arm_enabled
@@ -1771,20 +1899,35 @@ class NeroInferenceRuntime:
                     )
                 except Exception as exc:
                     log.warning("failed to send zero-torque shutdown command: %s", exc)
-        finally:
-            self._stop_state_stream(clear=True)
-            self.cameras.stop()
-            self.wrench_plotter.close()
-            self.tau_ext_plotter.close()
-            self.mujoco_visualizer.close()
-            if self.command_enabled and not preserve_arm_enabled:
-                try:
-                    self.arm.disable()
-                except Exception as exc:
-                    log.warning("arm disable failed during shutdown: %s", exc)
+        for closer in (self.cameras.stop, self.wrench_plotter.close,
+                       self.tau_ext_plotter.close, self.mujoco_visualizer.close):
+            try:
+                closer()
+            except Exception as exc:
+                cleanup_error = cleanup_error or exc
+                log.exception("failed to close an inference sensing/visualization resource")
+        if self.command_enabled and not preserve_arm_enabled:
+            try:
+                self.arm.disable()
+            except Exception as exc:
+                log.warning("arm disable failed during shutdown: %s", exc)
+        try:
             self.arm.disconnect()
-            self._close_model_pipeline()
+        except Exception as exc:
+            cleanup_error = cleanup_error or exc
+            log.exception("failed to disconnect inference arm")
+        try:
+            if self._async_workers_stopped():
+                self._close_model_pipeline()
+            else:
+                log.error("model worker is still running; skipping pipeline close")
+        except Exception as exc:
+            cleanup_error = cleanup_error or exc
+            log.exception("failed to close inference model pipeline")
+        finally:
             self._started = False
+        if cleanup_error is not None:
+            raise cleanup_error
 
 
 def _limit_reset_correction(error: np.ndarray, limit_rad: float | None) -> np.ndarray:

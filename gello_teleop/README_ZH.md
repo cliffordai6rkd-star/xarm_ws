@@ -456,12 +456,19 @@ python -m gello_teleop.dual_gello_collect \
 预留不同 episode 编号。退出时先停止并关闭设备，
 再等待已提交的保存任务完成。保存失败会报出目标路径并保留失败任务的内存数据。
 当前未录制时按 Enter 或空格也会打印提示。键盘操作需在启动程序的终端进行。
-相机按 `fps: 30` 采集，RGB 和对齐深度在采集进程内按 `output_size: [224, 224]`
+相机按 `fps: 30` 原生采集；`xarm7_gello_dual_dataset.yaml` 的两路 D405 配置
+`output_fps: 25`，在采集进程内按真实帧时间戳筛选，平均每 6 帧保留 5 帧。
+`output_fps` 可省略（保留全部帧），也可设置为不超过 `fps` 的正数。
+RGB 和对齐深度一起筛选，并在采集进程内按 `output_size: [224, 224]`
 缩放后保存；深度使用最近邻缩放并保留 uint16 原始深度值。
 `output.camera_compression: null` 直接写 H5 原始数组，不做 gzip 压缩或视频编码。
 保存按小批次写入，日志报告每路相机的帧数、进度和最终写入耗时。
-关节数据按 `control.sample_rate_hz: 100` 保存；相机使用独立的 30 Hz 时间戳，
-不复制图像以匹配关节数据行数。预览尺寸可独立由 `preview_output_size` 设置。
+关节数据按 `control.sample_rate_hz: 100` 保存；相机使用独立的真实采集时间戳，
+不复制图像以匹配关节数据行数。30→25 Hz 后，相邻保留帧的曝光时间间隔约为
+33/67 ms，长期平均约 25 帧/秒，不把曝光时间戳改写成等间隔 40 ms。
+H5 相机分组的 `fps` 保存目标输出频率 25，`capture_fps` 保存原生频率 30，
+`measured_fps` 保存实际帧数与时间跨度计算出的平均频率。
+预览尺寸可独立由 `preview_output_size` 设置。
 `control.deadline_policy: skip` 让运动控制线程在延迟后跳过过期时刻，
 按主机单调时钟使用最新有效主手目标和从臂状态继续下发，不补发历史指令。
 平滑位置参考使用真实经过的时间更新，仍受已有步长、速度和加速度限制。
@@ -534,6 +541,13 @@ python -m gello_teleop.dual_gello_collect \
 兼容字段 `arm: left/right` 都不会按机械臂选择过滤相机。
 GELLO 底层串口断连会报出侧别、串口路径、电机 ID 和操作，停止当次采集。
 
+启动位置保持或电流阻尼前会识别舵机型号。仅在型号 `ping` 遇到
+`-3001` / `-3002` 且无设备错误时重试，最多 3 次，间隔 10 ms。
+持续失败报 `GELLO model identification failed`，包含串口、ID 和原始错误；
+只有成功读到未知型号才报 `current damping unsupported`，同时列出型号编号。
+识别失败不复用旧型号放行，不下发该次模式或电流配置。
+此重试仅用于型号识别，遥操期间的位置读取和电流回读仍在失败时停止。
+
 遇到 `code=-3001`（`COMM_RX_TIMEOUT`），表示当前读取没有收到完整回包；
 `code=-3002`（`COMM_RX_CORRUPT`）可能是 CRC 错误，也可能是收到
 不完整回包后超时，不能仅凭 ID 判断电机损坏。停止数采及其他 GELLO 程序后运行：
@@ -578,27 +592,25 @@ xArm 状态优先从同一次 `get_joint_states` 回复取得 q、dq 和所选 e
 仍回退到角度查询。遥操夹爪指令同时设置 `wait=False` 和 `wait_motion=False`，
 避免额外等待机械臂动作占用共享通讯锁。
 
-URDF 反馈调用 Pinocchio `rnea(q, dq, ddq_filtered)`，计算
-`tau_model = M(q)ddq_filtered + C(q,dq)dq + g(q)`。
-单位为 rad、rad/s、rad/s² 和 Nm。加速度来自采集状态 `ddq`（xArm 适配器对速度反馈差分），
-先按 `acceleration_cutoff_hz` 做一阶低通，再送入 RNEA；RNEA 输出不再做力矩低通，
-也不再通过动量观测器计算。静止时输出重力力矩 `g(q)`。
-算法说明见 [Pinocchio 官方 RNEA 文档](https://github.com/stack-of-tasks/pinocchio/blob/devel/doc/a-features/g-dynamic.md)。
+URDF 反馈支持 `force_feedback.dynamics_method: rnea` 或 `momentum`。
+`rnea` 调用 Pinocchio 逆动力学，并加入配置的摩擦力矩；
+`momentum` 使用 `p=M(q)dq` 和 `beta=C(q,dq).T*dq-g(q)` 估计外力矩，完全不读取 `ddq`。
+当前数采配置选用 `momentum`，直接使用原始 q、dq、实测力矩，均值窗口为 1。
+观测器带宽初值为 10 Hz，连续时间近似时间常数为 `1/(2*pi*10)`，约 16 ms；
+不做额外输入低通不等于零相位，观测器自身仍有响应延迟。
 
-`tau_ext_cal` 使用一阶低通后的 SDK 实测力矩减去上述 RNEA 力矩，
-随后逐轴取滑动均值得到 `tau_ext`，图中展示这七轴值和对应的 L1 范数。
-URDF 模式的滤波参数和均值窗口使用 `force_feedback` 配置，绘图不重复计算 RNEA 或滤波。
-实测力矩截止频率为 `measured_torque_cutoff_hz`。
-两项截止频率独立，默认均为 3 Hz（时间常数约 53 ms），支持标量或 J1..J7 七元素数组，
-可在 `sides.left/right` 分别覆盖。滤波使用实际反馈时间间隔 `dt`：
-`alpha = 1-exp(-2*pi*cutoff_hz*dt)`，`filtered = previous+alpha*(raw-previous)`。
-首个有效样本直接初始化，避免从零开始的过渡；重复样本不更新滤波状态。
-反馈缺失、无效或间隔超过有效期时显示断线并重置计算状态。
-位置、速度、加速度或实测力矩不可用时，范数显示 `-- Nm`。
+`state_filters.q/dq/ddq` 可分别设置 `enabled` 和 `cutoff_hz`；
+`measured_torque_filter_enabled` 控制实测力矩是否低通。
+截止频率支持标量或 J1..J7 七元素数组，滤波使用实际报告间隔，
+首样本直接初始化，重复样本不更新状态。动量模式忽略 ddq 滤波及 ddq 有效性。
+旧配置省略新选项时仍使用 RNEA、原始 q/dq、3 Hz ddq 和实测力矩低通，不启用摩擦补偿。
+绘图直接复用同一个反馈结果，不重复动力学计算或滤波。
+位置、速度或实测力矩无效时显示断线并重置计算；RNEA 还要求有效加速度。
+动量观测器在启动或重置后的首个新样本只初始化，第二个新样本开始产生残差。
 不能将空图上的零轴视为计算结果。示例配置的 `arms.<side>.feedback_signal: torque`
 明确选择 SDK 力矩报告字段，而非电流。URDF 残差同时用于主手反馈和范数绘图。
 
-切换为 `source: checkpoint` 时，`tau_ext_pred` 复用 `force_feedback` 的异步预测，
+关闭下述 `learned_torque` 后，切换为 `source: checkpoint` 时，`tau_ext_pred` 复用 `force_feedback` 的异步预测，
 不在绘图进程重复加载网络；另一列独立计算 URDF 残差。
 实测力矩来自同一次推理的 `tau_measured`，其滤波方式由
 `force_feedback.measured_tau_filter` 决定；当前 `checkpoint` 对应训练目标的 10 Hz 低通。
@@ -661,6 +673,77 @@ python -m xarm_stack.torque_visualization --demo --headless \
 ```
 
 加 `--left` 或 `--right` 可预览单臂布局。
+
+### 动力学＋BiLSTM 外力矩曲线（2026-10-04）
+
+两个数采配置已开启 `torque_visualization.learned_torque`，默认用于右臂。
+普通布局中，网络列显示当前模型的七轴 `tau_ext`，底部增加 L1、L2 范数；
+启用 URDF 力反馈布局时，原有 URDF 范数和七轴曲线旁增加一列当前模型结果。
+L1 为 `sum(abs(tau_ext))`，L2 为 `sqrt(sum(tau_ext**2))`，单位 Nm。
+候选阈值 `a=5.4734632`、`b=10.0` 画在 **L1** 上，仅用于接触曲线检查。
+
+处理顺序与 `PINN_LCP` 的 `residual_bilstm_mixed_zero5_50` 实验一致：
+
+1. 按 lowdim 采样时间将 q、dq、`delta_q=q_cmd-q`、实测 tau 插值到 100 Hz。
+2. 四组数据分别经过四阶 5 Hz Butterworth 双向零相位低通，再以 `resample_poly` 降至 50 Hz。
+3. 辨识动力学先验为 URDF RNEA ＋惯性参数修正＋摩擦/偏置；ddq 由滤波后的 dq 差分得到。
+4. 两层 BiLSTM＋两层 MLP 输入 q/dq/delta_q 的 51 帧窗口，预测 `tau-动力学先验`；
+   加回先验得到 `tau_free`。网络输入不含实测 tau。
+5. 插值回原始 100 Hz 时间戳，`tau_ext=同样预处理的实测 tau-tau_free`。
+
+双向滤波和网络需要未来数据。实时窗口保留 4 秒输入，默认每 0.1 秒计算一次，
+只发布至少 1.5 秒以前的结果，首次约 2.5 秒后开始出图。横轴使用源时间，
+因此曲线右端留有延迟空白。滑动缓冲是整段离线滤波的近似；无效指令/状态、
+超过 30 ms 的采样间断或时间倒退会重置上下文，空白和 NaN 不作为零力矩。
+q_cmd 来自与 H5 相同的已发送指令选择，重复的机器人报告仍按 lowdim 时钟采样。
+预览阶段没有对应指令时会显示等待状态，接管后开始积累完整输入。
+
+该分支只用于绘图，运行在绘图进程的独立线程中；现有力反馈和 H5 字段仍由
+原有 `force_feedback` 分支负责。关闭新模型绘图可设置 `learned_torque.enabled: false`。
+当前模型的辨识参数和验证数据来自右臂，默认 `sides: [right]`。它使用训练时冻结的
+URDF/辨识参数，不叠加控制器当前 payload，避免把训练中已拟合的负载重复加入。
+
+```yaml
+torque_visualization:
+  learned_torque:
+    enabled: true
+    sides: [right]
+    # checkpoint: /absolute/path/model.pt  # 缺省使用下述 xarm_ws 内的权重
+    device: cpu
+    threads: 2
+    delay_s: 1.5
+    buffer_s: 4.0
+    interval_s: 0.1
+    thresholds_l1: [5.4734632, 10.0]
+```
+
+权重已导出到 `model/tau_offline/residual_bilstm_zero5_50/model.pt`，包含网络、归一化、
+98 个辨识系数和训练 URDF；运行不再依赖 `PINN_LCP`。同目录 `model.json` 记录来源和哈希。
+此文件沿用仓库的权重忽略规则，复制项目到其他机器时需同时复制权重，或重新导出：
+
+```bash
+python scripts/export_offline_torque_model.py \
+  --checkpoint ../PINN_LCP/outputs/xarm_tau_offline_20261004/residual/residual_bilstm_mixed_zero5_50.pt \
+  --physics ../PINN_LCP/outputs/xarm_tau_offline_20261004/physics/identified_dynamics_right_zero5.npz \
+  --urdf gello_teleop/models/xarm7_dynamics.urdf \
+  --output model/tau_offline/residual_bilstm_zero5_50/model.pt
+```
+
+环境需要 PyTorch、SciPy、Pinocchio、Matplotlib，当前 `gello` 环境已具备。
+以下命令只读 H5，不连接硬件，使用整段离线滤波生成图和原始时间戳上的预测：
+
+```bash
+python -m xarm_stack.torque_visualization \
+  --h5 runs/peel_cucumber_25hzcam/dual_gello_xarm_0000_20261004_140033.h5 \
+  --right --headless \
+  --save-plot runs/torque_model_review_20261004/episode_00.png \
+  --save-predictions runs/torque_model_review_20261004/episode_00.npz
+```
+
+去掉 `--headless` 打开交互窗口。NPZ 包含 `right_tau_free`、`right_tau_measured`
+（匹配滤波后的实测值）、`right_tau_ext`、两个范数、`right_timestamp_us` 和
+`right_valid_context`。每个连续片段首尾 1 秒无完整上下文，应按 `valid_context` 排除；
+绘图将这些位置留空。原始 H5 保持只读。
 
 双臂七轴电流可在另一个终端实时查看：
 
@@ -817,12 +900,26 @@ python scripts/migrate_h5_device_schema.py runs/earae_board_1003 --in-place
 `config/xarm7_gello_dual_dataset.yaml` 当前使用 `force_feedback.source: urdf`，
 以 xArm 的实测状态和 `models/xarm7_dynamics.urdf` 计算反馈。
 保持原有采集命令和 `r/s/f/t/o/q` 操作；`enabled: false` 可关闭外力矩反馈。
+例如，持久关闭可设置 `force_feedback.enabled: false`；改回 `true` 则启用。
+也可在本次启动时临时关闭，无需修改配置文件：
+
+```bash
+python -m gello_teleop.dual_gello_collect \
+  -c gello_teleop/config/xarm7_gello_dual_dataset.yaml --no-force-feedback
+```
+
+`--force-feedback` 可临时开启，两者互斥；不带参数时沿用 YAML。
+关闭后不启动力反馈模型、不叠加外力矩反馈电流；采集和独立的
+`gello_damping` 主手阻尼继续运行，启动对齐的位置保持也按原配置执行。
+如需关闭主手阻尼，另设 `gello_damping.enabled: false`。
+`--check-config` 的 `force_feedback_enabled` 显示本次有效设置。
 URDF 模式使用 Pinocchio，不加载神经网络权重或使用 CUDA，关闭力矩窗口也能反馈。
 
 ```text
-tau_m = lowpass(measured torque)
-tau_urdf = RNEA(q, dq, lowpass(ddq))
-tau_ext_cal = tau_m - tau_urdf
+tau_m = measured torque  # 可选低通
+tau_f = viscous*dq + coulomb*tanh(dq / velocity_smoothing)
+rnea:     tau_ext_cal = tau_m - RNEA(configured q, dq, ddq) - tau_f
+momentum: tau_ext_cal = momentum_observer(q, dq, tau_m, tau_f)
 tau_ext = moving_mean(tau_ext_cal, tau_ext_mean_window)
 tau_ext_l1 = sum(abs(tau_ext[J1..J7]))  # H5 外力矩结果只保存这一标量；可视化同时显示七轴 tau_ext
 feedback = gain_raw_per_nm * tau_ext * sign   if abs(tau_ext) > threshold_nm
@@ -832,7 +929,7 @@ GELLO 电流 = 限幅(阻尼电流 + joint_signs * 限幅(feedback))
 
 `q`、`dq`、`ddq` 来自 xArm 实测状态，单位为 rad、rad/s、rad/s²；
 RNEA 包含惯性、科氏/离心与重力项，结果为 Nm。
-实测力矩和加速度各使用独立的一阶低通，当前截止频率均为 3 Hz。
+动量模式避免速度差分所得加速度，并保持与 `tau_m - RNEA - tau_f` 相同的残差方向。
 模型在机械臂使能前加载，计算通过有界队列和独立线程完成，不阻塞控制或串口线程。
 `payload.source: controller` 复用 SDK 缓存中的 Studio 负载质量和法兰系质心，
 不增加硬件查询；负载缓存尚不可用时释放反馈。也可设置静态 `mass_kg`、`com_m`
@@ -841,15 +938,20 @@ RNEA 包含惯性、科氏/离心与重力项，结果为 Nm。
 滑动窗口按不同时间戳的有效 xArm 状态计数，不重复计入 100 Hz 采样线程重用的状态。
 将 `force_feedback.tau_ext_mean_window` 改成正整数即可调整，
 `1` 表示直接使用当前残差。收集满窗口后才启用反馈。
-窗口越大，曲线越平滑，同时会增加反馈延迟。
+窗口越大，曲线越平滑，同时会增加反馈延迟；当前配置为 1，不追加均值延迟。
 暂停、无效/过期数据、采样间断、时间倒退或负载变化时清空窗口，
 恢复后重新收集满窗口；低于阈值时立即释放反馈，保留正常阻尼。
 
 | 配置量 | 作用 |
 | --- | --- |
 | `source` | `urdf` 使用刚体动力学；`checkpoint` 保留原有网络模式 |
+| `dynamics_method` | URDF 模式选择 `rnea` 或 `momentum` |
+| `momentum_observer_bandwidth_hz` | 动量观测器带宽，正标量或七元素数组；带宽越高，对噪声越敏感 |
 | `urdf_path` / `gravity_m_s2` | 七轴 URDF 与基座系重力向量；相对路径以配置文件目录为准 |
-| `measured_torque_cutoff_hz` / `acceleration_cutoff_hz` | 实测力矩和 RNEA 输入加速度的截止频率 |
+| `measured_torque_filter_enabled` / `measured_torque_cutoff_hz` | 实测力矩低通开关和截止频率 |
+| `state_filters.q/dq/ddq` | 各状态低通的 `enabled` / `cutoff_hz`；momentum 不使用 ddq |
+| `acceleration_cutoff_hz` | 旧 ddq 截止频率，显式 `state_filters.ddq.cutoff_hz` 优先 |
+| `friction` | 摩擦补偿开关、系数来源和平滑速度，见下方公式 |
 | `tau_ext_mean_window` | 残差滑动均值窗口，正整数，按不同有效状态计数 |
 | `payload` | 控制器缓存负载或静态法兰系负载 |
 | `threshold_nm` | 对平均后的残差取绝对值判断，超过后反馈完整残差 |
@@ -873,14 +975,25 @@ H5 的外力矩结果只保存平均后残差的七轴 L1 范数，字段固定�
 关节状态、相机和 GELLO 电流字段继续保存。
 `<side>_tau_free_pred_xarm` 是所选基准力矩的兼容字段，在 URDF 模式等于
 `<side>_tau_urdf_xarm`；`tau_free_*` 时间戳和有效性也按相同格式保存。
-元数据记录 URDF 来源、范数阶数、七轴数量、滤波和均值窗口。
+RNEA 模式该基准为逆动力学加摩擦；momentum 模式为
+`tau_feedback_measured - momentum_observer_residual` 的重构基准，不是瞬时 RNEA 力矩。
+元数据和数据集属性记录各臂算法、URDF 来源、实际滤波开关、摩擦系数及均值窗口。
 计算顺序是逐轴滑动均值后取 L1 范数；先取范数再求均值会得到不同结果。
 可视化使用同一份残差和源状态时间戳，只展示每臂一条范数曲线。
 
 如需原网络模式，设置 `source: checkpoint`、`checkpoint_path`、`device`，
 以及 `measured_tau_filter: raw` 或 `checkpoint`；网络模式仍按权重恢复
 q/dq/delta_q 输入、归一化、滤波和 50 帧历史。URDF 模式不等待网络历史。
-URDF 残差也包含未建模摩擦、模型和力矩偏差，应结合现有阈值与实机状态调参。
+摩擦补偿采用 `tau_f = viscous*dq + coulomb*tanh(dq / velocity_smoothing_rad_s)`，
+正负速度对应正负驱动力矩，零速度摩擦模型输出 0。
+`friction.source: urdf` 读取 joint1..7 的 `dynamics.damping/friction`；当前选择此来源，
+J1..J7 黏性系数为 `[10, 10, 5, 5, 5, 2, 2]` Nm/(rad/s)，
+库仑系数均为 1 Nm，仅为试验初值，不代表实机辨识。
+可用 `viscous_nm_s_per_rad`、`coulomb_nm` 的标量或七元素数组覆盖，
+或设 `source: configured` 全部使用配置系数；省略系数时 configured 默认 0。
+`velocity_smoothing_rad_s` 默认 0.02，可逐轴配置。`enabled: false` 关闭补偿。
+这些设置支持 `sides.left/right` 部分覆盖，未覆盖的嵌套参数继承全局值。
+该模型没有辨识静摩擦、换向滞回、温漂和负载误差，残差仍需实机检查。
 
 ### GELLO 阻尼
 

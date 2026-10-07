@@ -1,0 +1,16 @@
+{
+  "fixed_validation_indices": {
+    "contact": 16013,
+    "free": 15648,
+    "pre_contact": 15913
+  },
+  "num_samples": 32,
+  "paired_validation_indices": {},
+  "phase_aggregation": "max_existing_future_contact_phase",
+  "raw_anchor_indices": {
+    "contact": 18204,
+    "free": 17839,
+    "pre_contact": 18104
+  },
+  "seed": 2027
+}

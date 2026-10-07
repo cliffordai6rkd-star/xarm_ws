@@ -67,6 +67,15 @@ class CameraFrame:
     depth: np.ndarray | None = None
 
 
+@dataclass(frozen=True)
+class CameraPreviewOverlay:
+    """Preview metadata only; never modifies policy or recorded images."""
+    lines: tuple[str, ...] = ()
+    phases: tuple[int, ...] = ()
+    expires_at_s: float = 0.0
+    expired_text: str = 'WM: forecast expired; waiting for fresh prediction'
+
+
 class CameraVisualizer:
     """Display selected RGB streams in an isolated, lossy worker process.
 
@@ -84,6 +93,7 @@ class CameraVisualizer:
         )
         self._dispatch_thread: threading.Thread | None = None
         self._failure_logged = False
+        self._overlay_queue = None
 
     @classmethod
     def from_config(cls, configs: tuple[CameraConfig, ...]) -> "CameraVisualizer":
@@ -110,9 +120,11 @@ class CameraVisualizer:
             # partially written image in this deliberately lossy queue.
             process_queue.cancel_join_thread()
             stop_event = context.Event()
+            self._overlay_queue = context.Queue(maxsize=1)
+            self._overlay_queue.cancel_join_thread()
             process = context.Process(
                 target=_camera_visualizer_worker,
-                args=(tuple(sorted(self.camera_names)), process_queue, stop_event),
+                args=(tuple(sorted(self.camera_names)), process_queue, stop_event, self._overlay_queue),
                 name="camera-visualizer",
                 daemon=True,
             )
@@ -134,6 +146,9 @@ class CameraVisualizer:
                 pass
             if process_queue is not None:
                 process_queue.close()
+            if self._overlay_queue is not None:
+                self._overlay_queue.close()
+                self._overlay_queue = None
             self._queue = None
             self._process = None
             self._stop_event = None
@@ -170,6 +185,9 @@ class CameraVisualizer:
         self._process = None
         self._stop_event = None
         self._dispatch_thread = None
+        if self._overlay_queue is not None:
+            self._overlay_queue.close()
+            self._overlay_queue = None
         while True:
             try:
                 self._dispatch_queue.get_nowait()
@@ -191,6 +209,10 @@ class CameraVisualizer:
         # Never copy or pickle in the caller. CameraManager's caller owns the
         # frame for the remainder of this cycle and does not mutate it.
         _put_latest_camera_preview(self._dispatch_queue, frame)
+
+    def set_overlay(self, overlay: CameraPreviewOverlay) -> None:
+        if self._overlay_queue is not None:
+            _put_latest_camera_preview(self._overlay_queue, overlay)
 
     def _dispatch_loop(self) -> None:
         while True:
@@ -226,6 +248,7 @@ def _camera_visualizer_worker(
     camera_names: tuple[str, ...],
     frame_queue,
     stop_event=None,
+    overlay_queue=None,
 ) -> None:
     """Own all GUI calls in a child process and render one labeled camera grid."""
     # OpenCV's Qt build can select Wayland even when only its xcb plugin is
@@ -234,6 +257,7 @@ def _camera_visualizer_worker(
     window = None
     latest_frames: dict[str, np.ndarray] = {}
     stop = False
+    overlay = CameraPreviewOverlay()
     try:
         cv2 = _import_cv2()
         window = _create_camera_preview_window(cv2)
@@ -269,6 +293,13 @@ def _camera_visualizer_worker(
                     latest_frames,
                     cv2,
                 )
+                if overlay_queue is not None:
+                    while True:
+                        try:
+                            overlay = overlay_queue.get_nowait()
+                        except queue.Empty:
+                            break
+                preview = _draw_camera_overlay(preview, overlay, cv2, time.time())
                 window.show(preview)
             if not window.poll():
                 break
@@ -282,6 +313,25 @@ def _camera_visualizer_worker(
                 window.close()
             except Exception:
                 log.debug("failed to destroy camera preview window", exc_info=True)
+
+
+def _draw_camera_overlay(preview, overlay, cv2, now_s):
+    if not overlay.lines:
+        return preview
+    active = now_s <= overlay.expires_at_s
+    lines = overlay.lines if active else (overlay.expired_text,)
+    height = 24 * len(lines) + (22 if active and overlay.phases else 4)
+    banner = np.zeros((height, preview.shape[1], 3), dtype=np.uint8)
+    for row, line in enumerate(lines):
+        cv2.putText(banner, line, (8, 18 + row * 24), cv2.FONT_HERSHEY_SIMPLEX,
+                    .45, (240, 240, 240), 1, cv2.LINE_AA)
+    if active and overlay.phases:
+        colors = ((80, 190, 80), (40, 190, 255), (70, 70, 240))  # BGR free/pre/contact.
+        for index, phase in enumerate(overlay.phases):
+            left = index * banner.shape[1] // len(overlay.phases)
+            right = (index + 1) * banner.shape[1] // len(overlay.phases)
+            banner[-18:, left:right] = colors[phase]
+    return np.concatenate((preview, banner), axis=0)
 
 
 def _create_camera_preview_window(cv2):
@@ -304,9 +354,7 @@ class _OpenCVCameraPreviewWindow:
         if not self.opened:
             self.cv2.namedWindow(self.name, self.cv2.WINDOW_NORMAL)
             height, width = preview.shape[:2]
-            scale = max(1.0, 512.0 / width, 384.0 / height)
-            self.cv2.resizeWindow(self.name, int(round(width * scale)),
-                                  int(round(height * scale)))
+            self.cv2.resizeWindow(self.name, width, height)
             self.opened = True
         self.cv2.imshow(self.name, preview)
 
@@ -330,7 +378,7 @@ class _TkCameraPreviewWindow:
         self.root = self.tk.Tk()
         self.root.title("Nero cameras")
         self.root.withdraw()
-        self.root.minsize(320, 120)
+        self.root.minsize(1, 1)
         self.label = self.tk.Label(self.root, background="black", borderwidth=0)
         self.label.pack(fill="both", expand=True)
         self.opened = False
@@ -458,6 +506,49 @@ class CameraSource:
 
     def poll(self) -> CameraFrame | None:
         raise NotImplementedError
+
+
+class RateLimitedCamera(CameraSource):
+    """Select one acquired frame per output time bin without duplicating frames.
+
+    Bins are anchored to acquisition timestamps, so 30 -> 25 Hz keeps five of
+    each six frames instead of drifting to 15 Hz by waiting 40 ms after each
+    accepted frame. Gaps are skipped; original RGB/depth and timestamps survive.
+    """
+
+    def __init__(self, source: CameraSource, output_fps: float) -> None:
+        self.source = source
+        self.name = source.name
+        self.output_fps = float(output_fps)
+        if not np.isfinite(self.output_fps) or self.output_fps <= 0:
+            raise ValueError("camera output FPS must be positive and finite")
+        self._first_timestamp_us = None
+        self._last_timestamp_us = None
+        self._last_bin = -1
+
+    def start(self) -> None:
+        self._first_timestamp_us = self._last_timestamp_us = None
+        self._last_bin = -1
+        self.source.start()
+
+    def stop(self) -> None:
+        self.source.stop()
+
+    def poll(self) -> CameraFrame | None:
+        frame = self.source.poll()
+        if frame is None:
+            return None
+        stamp = int(frame.timestamp_us)
+        if self._last_timestamp_us is not None and stamp <= self._last_timestamp_us:
+            return None
+        self._last_timestamp_us = stamp
+        if self._first_timestamp_us is None:
+            self._first_timestamp_us = stamp
+        slot = int((stamp - self._first_timestamp_us) * self.output_fps / 1e6)
+        if slot <= self._last_bin:
+            return None
+        self._last_bin = slot
+        return frame
 
 
 class ProcessCameraSource(CameraSource):
@@ -758,6 +849,7 @@ class RealSenseCamera(CameraSource):
     _pipeline: Any = field(init=False, default=None)
     _align: Any = field(init=False, default=None)
     _timestamp_offset_us: int = field(init=False, default=0)
+    _last_device_timestamp_us: int | None = field(init=False, default=None)
     _depth_scale: float = field(init=False, default=0.001)
     _delivered_timestamp_us: int = field(init=False, default=0)
 
@@ -820,12 +912,22 @@ class RealSenseCamera(CameraSource):
                 except Exception:
                     log.debug("could not configure RealSense exposure", exc_info=True)
         self._delivered_timestamp_us = 0
+        self._last_device_timestamp_us = None
         try:
             frames = pipeline.wait_for_frames(timeout_ms=int(self.config.startup_timeout_s * 1000))
             timestamp_ms = float(frames.get_timestamp())
-            self._timestamp_offset_us = now_us() - int(timestamp_ms * 1000.0)
-        except Exception:
-            self._timestamp_offset_us = now_us()
+            device_timestamp_us = int(timestamp_ms * 1000.0)
+            self._timestamp_offset_us = now_us() - device_timestamp_us
+            self._last_device_timestamp_us = device_timestamp_us
+        except Exception as exc:
+            try:
+                self.stop()
+            except Exception:
+                log.debug("failed to stop RealSense %s after timestamp initialization failed", self.name,
+                          exc_info=True)
+            raise CameraUnavailable(
+                f"RealSense camera {self.name} could not initialize its first frame timestamp: {exc}"
+            ) from exc
 
     def stop(self) -> None:
         if self._pipeline is not None:
@@ -842,12 +944,24 @@ class RealSenseCamera(CameraSource):
             frames = self._pipeline.poll_for_frames()
             if not frames:
                 return None
+            received_us = now_us()
+            # Use the same (unaligned frameset) clock as startup calibration.
+            device_timestamp_us = int(float(frames.get_timestamp()) * 1000.0)
+            if (self._last_device_timestamp_us is not None
+                    and device_timestamp_us <= self._last_device_timestamp_us):
+                return None
+            self._last_device_timestamp_us = device_timestamp_us
+            # Startup frames can be queued. Reduce that initial latency bias
+            # when a lower-latency frame arrives; never increase the offset to
+            # make delayed frames appear fresh.
+            self._timestamp_offset_us = min(
+                self._timestamp_offset_us, received_us - device_timestamp_us)
+            timestamp_us = self._timestamp_offset_us + device_timestamp_us
             if self._align is not None:
                 frames = self._align.process(frames)
             color = frames.get_color_frame()
             if not color:
                 return None
-            timestamp_us = self._timestamp_offset_us + int(float(frames.get_timestamp()) * 1000.0)
             if timestamp_us <= self._delivered_timestamp_us:
                 return None
             rgb = np.asanyarray(color.get_data()).copy()
@@ -1370,14 +1484,20 @@ class CameraManager:
 def _build_camera(config: CameraConfig) -> CameraSource:
     backend = config.backend.lower().replace("-", "_")
     if backend in {"mock", "simulation"}:
-        return MockCamera(config)
-    if backend in {"orbbec", "orbbec_dabai", "orbbec_dabai_sdk"}:
-        return OrbbecDabaiCamera(config)
-    if backend in {"v4l2", "opencv_v4l2", "opencv"}:
-        return V4L2Camera(config)
-    if backend in {"realsense", "real_sense", "realsense2"}:
-        return RealSenseCamera(config)
-    raise CameraUnavailable(f"unsupported camera backend {config.backend!r}")
+        source = MockCamera(config)
+    elif backend in {"orbbec", "orbbec_dabai", "orbbec_dabai_sdk"}:
+        source = OrbbecDabaiCamera(config)
+    elif backend in {"v4l2", "opencv_v4l2", "opencv"}:
+        source = V4L2Camera(config)
+    elif backend in {"realsense", "real_sense", "realsense2"}:
+        source = RealSenseCamera(config)
+    else:
+        raise CameraUnavailable(f"unsupported camera backend {config.backend!r}")
+    if config.output_fps is not None and config.output_fps < config.fps:
+        log.info("camera %s: acquisition=%.1f FPS, output=%.1f FPS (timestamp selection)",
+                 config.name, config.fps, config.output_fps)
+        source = RateLimitedCamera(source, config.output_fps)
+    return source
 
 
 def _import_orbbec_module() -> object | None:

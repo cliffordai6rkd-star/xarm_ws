@@ -175,6 +175,31 @@ def test_theoretical_only_state_requests_position_velocity_without_effort(adapte
     assert np.isnan(state.torque).all()
 
 
+def test_joint_only_feedback_skips_tcp_request_and_preserves_receive_timestamp(adapter, monkeypatch):
+    from unittest.mock import Mock
+    from inference.joint_runtime import state_time
+    adapter.config.config_kwargs['feedback_signal'] = 'torque'
+    q, dq, effort = np.full(6, .25), np.full(6, .1), np.full(6, 2.)
+    joint_states = Mock(return_value=(0, [q.tolist(), dq.tolist(), effort.tolist()]))
+    pose = Mock(side_effect=AssertionError('joint inference must not request TCP pose'))
+    monkeypatch.setattr(adapter._arm, 'get_joint_states', joint_states)
+    monkeypatch.setattr(adapter._arm, 'get_position_aa', pose)
+    stamps = iter([1_000_000, 1_200_000])  # A 200 ms SDK read is fresh on receipt.
+    monkeypatch.setattr('ufactory_devices.robot.xarm_adapter.now_us', lambda: next(stamps))
+
+    state = adapter.read_joint_state()
+
+    joint_states.assert_called_once_with(is_radian=True, num=3)
+    pose.assert_not_called()
+    np.testing.assert_array_equal(state.q, q)
+    np.testing.assert_array_equal(state.dq, dq)
+    np.testing.assert_array_equal(state.torque, effort)
+    assert state.q_valid and state.dq_valid and state.torque_valid
+    assert state.acquired_timestamp_us == state.q_acquired_timestamp_us == 1_000_000
+    assert state_time(state) == state.q_timestamp_us == 1_200_000
+    assert np.isnan(state.ee_pose).all()  # No fabricated identity or cached TCP.
+
+
 @pytest.mark.parametrize('signal', ['none', 'torque', 'current'])
 def test_joint_state_read_uses_one_reply_for_position_velocity_and_effort(adapter, monkeypatch, signal):
     from unittest.mock import Mock

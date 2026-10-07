@@ -161,7 +161,7 @@ python uf_robot_gello_teleop.py --config config/xarm7_gello_teleop.yaml
 pip install -r requirements-xarm.txt
 python -m nero_collection.cli --config configs/mock_collection.yaml --backend mock \
   --dry-run-duration 1 --episode-limit 1 --auto-save
-python scripts/run_pi0_wm.py --mock --mock-wm --steps 260
+python -m inference.cli --config inference/configs/pi0_wm_mock.yaml --mock --auto-start --steps 260
 ```
 
 xArm SDK 默认只读；只有 endpoint 显式设置 `execution_enabled: true` 后才允许使能和位置下发。SDK 没有经核实的 Nero/MIT 关节力矩接口。硬件字段、模型契约和未验证范围请以迁移清单为准。
@@ -198,3 +198,68 @@ python -m xarm_stack.test_joint_current \
   --arm both --duration 30 --output current_test.h5
   、、、
 默认不运动；需要当前位置保持时增加 --hold，并将对应 execution_enabled 改为 true。运行中 b/p/l 标记 baseline、press、release。
+
+H5 离线回看使用 `scripts/browse_h5_rerun.py`，支持 `dual_gello_xarm_NNNN_*.h5`
+和旧 `episode_NNNN_*.h5` 文件名。当前机器的 `gello` 环境已安装 Rerun 0.26.2 和 Pinocchio：
+
+```bash
+cd /home/eid/code/xarm_ws
+conda activate gello
+python scripts/browse_h5_rerun.py \
+  runs/peel_cucumber_25hzcam --arm right
+```
+
+输入集号 `0`～`47` 回看双路 RGB、右臂 TCP 三维轨迹、J1～J7 实际/目标关节角
+及七轴 `tau_ext_cal`。图像使用各自的采集时间戳，与低维曲线共享时间轴。
+输入下一集号切换，`q` 退出；`d` 会将当前文件移动到 `runs/trash`。
+
+已录制的七轴 `tau_ext_cal` 优先显示。缺失时默认按 H5 的 `force_feedback` 配置，
+使用当前 URDF、已录制的关节状态及实测力矩离线估算，曲线和面板标明 `offline estimate`，
+不修改原 H5。`peel_cucumber_25hzcam` 的 48 集均未保存七轴外力矩，使用动量观测器估算；
+控制器 TCP 负载未随数据保存，因此仅使用当前 URDF 的惯量，结果可能包含负载和模型误差。
+无效及观测器启动样本保留为空值。面板显示 URDF 路径、SHA256、输入字段和摩擦配置。
+增加 `--no-estimate-tau-ext` 可以关闭估算。
+
+LeRobot v3 清洗使用独立入口（`pinn` 环境含 PyAV 和 Rerun 0.26.2）：
+
+```bash
+conda activate pinn
+python scripts/rerun_lerobotv3.py --clip
+# 也可直接传入数据集根目录：
+python scripts/rerun_lerobotv3.py \
+  runs/3cam_data/v3/peel_cucumber_25hz_3cam_lerobotv3 --clip
+```
+
+先输入包含 `meta/info.json` 的 v3 文件夹，再输入 episode 编号。只读取所选
+episode 的低维数据，视频按需逐帧解码，以每秒 60 个原始帧播放；25 fps 数据约为
+2.4 倍速，解码/显示跟不上时降低播放速度，不跳帧。加载完所选 episode 后，
+在 Rerun 的 **`episode_time`** 时间轴上拖动查看，图像和曲线随游标一起变化。
+
+- 确定截断位置后，在终端输入该 episode 内的秒数，例如 `12.34`，也支持 `00:12.34`。
+- 终端显示对应帧号、实际保留到的时间及删除帧数。保留时间小于或等于输入时间的帧；
+  输入时间落在两帧之间时，保留前一帧。可以重新输入时间调整选择。
+- 输入 `y` 并回车确认裁剪，保存后回到 episode 输入。`c` 并回车跳过当前集，
+  `q` / Ctrl-C 退出。不再使用终端空格暂停来选择截断点。
+
+默认写入同级 `<数据集名>_clipped`，可用 `--output` 指定独立目录；原数据不修改。
+未裁剪的 episode 保留，episode 编号不变。工具更新 Parquet 行、连续全局 index、
+episode 长度/起止索引、视频有效区间和统计量。共享 MP4 保留原编码，被移除的尾段
+不再被训练索引引用；不重新编码视频。结果分阶段写入并原子发布，失败保留上次结果。
+`meta/clip_history.json` 记录选择；再次用相同源目录和输出目录启动时自动继续已有结果。
+Rerun 用于查看时间；实际裁剪以终端输入并确认的时间为准，不自动读取查看器游标。
+
+不加 `--clip` 只回看，不保存；`--camera front` 可只看一路，也支持
+`--camera front/left_wrist/right_wrist`。保存始终裁剪整条统一帧记录，包含所有相机。
+后续训练应使用 `_clipped` 目录，并重新生成训练所需的归一化统计；本工具不修改
+现有模型 checkpoint 或 openpi 的 `norm_stats.json`。
+
+直接检查或导出某集（不会启动 GUI）：
+
+```bash
+python scripts/visualize_h5_rerun.py \
+  runs/peel_cucumber_25hzcam --episode 0 --check --no-images
+python scripts/visualize_h5_rerun.py \
+  runs/peel_cucumber_25hzcam --episode 0 --save /tmp/peel_cucumber_0.rrd
+```
+
+直接查看命令也接受 `--urdf /path/to/model.urdf`，用于指定离线估算模型。

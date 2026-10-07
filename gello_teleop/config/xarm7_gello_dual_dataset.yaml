@@ -1,5 +1,5 @@
 active_arms: [
-              left,
+              # left,
               right
 ]  # [left, right] 双臂；[left] 或 [right] 单臂；不影响 cameras 的保存和预览
 # Hardware workflow: freshly measured calibration is required.
@@ -7,11 +7,21 @@ gello_config: xarm7_gello_calibration.yaml
 torque_visualization:
   enabled: true
   urdf_path: ../models/xarm7_dynamics.urdf
-  measured_torque_cutoff_hz: 3.0  # tau_ext_cal 的实测 tau 一阶低通，Hz；tau_ext_pred 沿用 force_feedback 滤波
-  acceleration_cutoff_hz: 3.0  # 速度差分所得 ddq 一阶低通截止频率，Hz
+  measured_torque_cutoff_hz: 3.0  # 独立绘图的备用设置；source: urdf 时直接复用 force_feedback 结果
+  acceleration_cutoff_hz: 3.0  # source: urdf 时不在绘图中重复滤波或计算动力学
   window_s: 30.0
   update_hz: 10.0
   stale_s: 0.15
+  learned_torque:
+    enabled: true
+    sides: [right]  # 当前模型按右臂验证；与现有 URDF 曲线并排显示
+    # 默认权重：model/tau_offline/residual_bilstm_zero5_50/model.pt（xarm_ws 内独立运行）
+    device: cpu
+    threads: 2
+    delay_s: 1.5  # 双向 5 Hz 滤波 + BiLSTM 的未来上下文；首次约 2.5 s 后出图
+    buffer_s: 4.0
+    interval_s: 0.1
+    thresholds_l1: [5.4734632, 10.0]  # 曲线检查候选阈值，仅适用于 L1
   payload:
     source: controller  # SDK rich report: Studio 中已设置的末端负载质量和法兰系质心
   sides: {}  # left/right 可覆盖模型、重力、截止频率和末端负载
@@ -35,20 +45,34 @@ gello_damping:
     right:
       sample_rate_hz: 12  # USB latency=1 ms；完整读写约 59 ms，83.3 ms 周期留出余量
 force_feedback:
-  enabled: true
+  enabled: false  # 总开关：false 关闭力反馈，保留 gello_damping；--no-force-feedback 可临时关闭
   source: urdf
   urdf_path: ../models/xarm7_dynamics.urdf
-  measured_torque_cutoff_hz: 3.0  # 实测 tau_m 的一阶低通截止频率，Hz
-  acceleration_cutoff_hz: 3.0  # RNEA 输入 ddq 的一阶低通截止频率，Hz
-  tau_ext_mean_window: 20  # tau_m - tau_urdf 的滑动均值窗口；按新的有效 xArm 样本计数，1 为不平均
+  dynamics_method: momentum  # momentum: q/dq/tau 外力矩观测，不使用 ddq；rnea: 逆动力学相减
+  momentum_observer_bandwidth_hz: 10.0  # 观测器自身有限带宽，时间常数约 16 ms；不是零相位
+  measured_torque_filter_enabled: false  # false 直接使用实测力矩，不加额外低通
+  measured_torque_cutoff_hz: 3.0  # 仅 measured_torque_filter_enabled: true 时生效
+  acceleration_cutoff_hz: 3.0  # 旧配置兼容项；state_filters.ddq.cutoff_hz 优先
+  state_filters:
+    q: {enabled: false, cutoff_hz: 3.0}
+    dq: {enabled: false, cutoff_hz: 3.0}
+    ddq: {enabled: false, cutoff_hz: 3.0}  # 仅 rnea 使用；momentum 完全忽略 ddq
+  friction:
+    enabled: true
+    source: urdf  # J1..J7 damping=[10,10,5,5,5,2,2]、friction 均为 1，仅作试验初值
+    velocity_smoothing_rad_s: 0.02  # tau_f = damping*dq + friction*tanh(dq / smoothing)
+    # 可逐轴覆盖 URDF 初值（J1..J7），单位 Nm/(rad/s) 和 Nm：
+    # viscous_nm_s_per_rad: [10, 10, 5, 5, 5, 2, 2]
+    # coulomb_nm: [1, 1, 1, 1, 1, 1, 1]
+  tau_ext_mean_window: 20  # 1 不再追加滑动均值；momentum 本身仍有有限响应时间
   payload:
     source: controller  # 使用 SDK 缓存中的 Studio 负载质量和法兰系质心
-  # tau_ext = mean(tau_m - RNEA(q,dq,ddq))；窗口满后，abs(tau_ext) > threshold_nm 才反馈。
+  # momentum 残差与 tau_m - RNEA - tau_f 同向；abs(tau_ext) > threshold_nm 才反馈。
   threshold_nm: [2, 5.5, 1.5, 5.5, 2, 1.5, 1.0] # 接触触发阈值，J1..J7，Nm
   gain_raw_per_nm: [5, 5, 5, 5, 5, 5, 5]  # 力反馈强度：GELLO 原始电流单位 / Nm
   sign: [-1, -1, -1, -1, -1, -1, -1]  # 反馈方向；随后自动乘 GELLO 标定 joint_signs
   # 占 XL330 最大原始电流 1750 的百分比，范围 0~100；这不是官方持续安全电流。
-  # round(百分比 * 1750 / 100)；以下仍对应 [20, 20, 15, 15, 15, 15, 15]。
+  # round(百分比 * 1750 / 100)；以下每轴对应 1400 raw。
   current_limit_percent: [80, 80, 80, 80, 80, 80, 80]  # 与阻尼相加后仍受 damping_current_limit 限制
   rate_limit_raw_s: 200  # 电流上升变化率；无效/低于阈值时立即归零
   ramp_s: 0.05  # 每次恢复有效反馈后的渐入时间
@@ -121,21 +145,23 @@ gripper:
   max_speed_m_s: 0.02  # 仅 control_mode: rate_limited_position 时生效
 require_cameras: true
 cameras:
-# - name: 'front'
-#   backend: realsense
-#   serial_number: '262722072129'
-#   width: 640
-#   height: 480
-#   fps: 30
-#   output_size: [224, 224]  # 保存 RGB/深度的尺寸；相机采集仍为 640x480@30 Hz
-#   depth: true
-#   visualize: true  
+- name: 'front'
+  backend: realsense
+  serial_number: '262722072129'
+  width: 640
+  height: 480
+  fps: 30  # D435i 的 640x480 RGB/深度流不支持原生 25 FPS
+  output_fps: 25  # 相机采集 30 Hz，按原始时间戳筛选后保存约 25 Hz
+  output_size: [224, 224]  # 保存 RGB/深度的尺寸；相机采集仍为 640x480@30 Hz
+  depth: true
+  visualize: true
 - name: 'right_wrist'
   backend: realsense
   serial_number: '419122271564'
   width: 640
   height: 480
-  fps: 30
+  fps: 30  # D405 的 640x480 RGB 模式不支持 25 FPS
+  output_fps: 25  # 按真实采集时间戳筛选，保存/推理输出约 25 帧/秒
   output_size: [224, 224]  # 保存 RGB/深度的尺寸；相机采集仍为 640x480@30 Hz
   depth: false
   visualize: true  # 所有启用的视角拼接到同一个预览窗口
@@ -144,13 +170,14 @@ cameras:
   serial_number: '419122270270'
   width: 640
   height: 480
-  fps: 30
+  fps: 30  # D405 的 640x480 RGB 模式不支持 25 FPS
+  output_fps: 25  # 按真实采集时间戳筛选，保存/推理输出约 25 帧/秒
   output_size: [224, 224]  # 保存 RGB/深度的尺寸；相机采集仍为 640x480@30 Hz
   depth: false
   visualize: true
 output:
   camera_compression: null  # 缩放后的原始数组直接写 H5，不做 gzip/视频编码
-  directory: ../../runs/wipe_vase
+  directory: ../../3cam_data/h5/cut_cucumber_25hz_3cam
   prefix: dual_gello_xarm
   discard_initial_s: 0.0
 gello_template: xarm7_gello_teleop_dual.yaml

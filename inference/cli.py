@@ -5,21 +5,35 @@ import json
 import logging
 from pathlib import Path
 import yaml
+from inference.interactive import INTERACTION_HELP, add_interaction_arguments, run_interactive
 
 
 def main(argv=None) -> None:
     probe = argparse.ArgumentParser(add_help=False)
     probe.add_argument("--config")
     known, _ = probe.parse_known_args(argv)
-    if known.config and "policy" in (yaml.safe_load(Path(known.config).read_text()) or {}):
-        from inference.joint_cli import main as joint_main
+    if known.config:
+        document = yaml.safe_load(Path(known.config).read_text()) or {}
+        if document.get('pipeline') in ('pi0_contact_wm', 'pi0_latent_wm') and document.get('wm', {}).get('enabled') is False:
+            from inference.joint_cli import main as joint_main
 
-        return joint_main(argv)
+            return joint_main(argv, run_loop=run_interactive)
+        if document.get('pipeline') in ('dp_latent_wm', 'dp_contact_wm', 'pi0_contact_wm', 'pi0_latent_wm'):
+            from inference.dp_wm.cli import main as dp_wm_main
+
+            return dp_wm_main(argv)
+        if "pi0" in document and "policy" not in document:
+            from inference.pi0_wm.cli import main as pi0_main
+
+            return pi0_main(argv, run_loop=run_interactive)
+        if "policy" in document:
+            from inference.joint_cli import main as joint_main
+
+            return joint_main(argv, run_loop=run_interactive)
     from inference.checkpoints import restore_checkpoint_model
     from inference.config import load_inference_config
     from inference.pipeline import _dp_model_overrides
     from inference.runtime import NeroInferenceRuntime
-    from nero_collection.keyboard import TerminalKeys
     parser = argparse.ArgumentParser(
         description="Nero DP inference with direct-q/tau and MTC control"
     )
@@ -37,11 +51,7 @@ def main(argv=None) -> None:
     )
     parser.add_argument("--backend", choices=("pyagxarm", "mock"), default=None)
     parser.add_argument("--duration", type=float, default=None)
-    parser.add_argument(
-        "--single-step",
-        action="store_true",
-        help="start paused; press s for exactly one inference/control cycle, c to resume",
-    )
+    add_interaction_arguments(parser)
     parser.add_argument(
         "--enable-command",
         action="store_true",
@@ -179,18 +189,11 @@ def main(argv=None) -> None:
     mode_text = "COMMAND ENABLED" if args.enable_command else "read-only"
     print(
         f"Starting Nero inference ({mode_text}). "
-        "Press s for one inference cycle (pauses after it), c to resume "
-        "continuous inference, i to reset/start the next episode, or q/Ctrl-C "
-        "to reset and exit.",
+        + INTERACTION_HELP,
         flush=True,
     )
     try:
-        with TerminalKeys() as keys:
-            cycles = runtime.run(
-                args.duration,
-                read_key=keys.read_key,
-                single_step=args.single_step,
-            )
+        cycles = run_interactive(runtime, args)
     except KeyboardInterrupt:
         # Covers interrupts raised before NeroInferenceRuntime.run() takes
         # ownership. Interrupts during the control loop are reset there.

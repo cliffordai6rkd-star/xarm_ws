@@ -1,0 +1,23 @@
+{
+  "repository": "https://github.com/xArm-Developer/xarm_ros2",
+  "commit": "62936f7ea1846a85f7350de2c4c18f39e6d19715",
+  "source_paths": "xarm_description/meshes/{xarm7/visual,gripper/xarm}",
+  "license": "../../models/LICENSE.xarm_ros2",
+  "sha256": {
+    "xarm7/visual/link7.stl": "97115d848fbf802cb770cd9be639ae2af993103b9d9bbb0c50c943c738a36f18",
+    "xarm7/visual/link5.stl": "715ad5787c5dab57589937fd47289882707b5e1eb997e340d567785b02f4ec90",
+    "xarm7/visual/link4.stl": "c757fee95f873191a0633c355c07a360032960771cabbd7593a6cdb0f1ffb089",
+    "xarm7/visual/link1.stl": "34b541122df84d2ef5fcb91b715eb19659dc15ad8d44a191dde481f780265636",
+    "xarm7/visual/link3.stl": "9e2798e7946dd70046c95455d5ba96392d0b54a6069caba91dc4ca66e1379b42",
+    "xarm7/visual/link_base.stl": "cf52275a913a0977595f5d12373f06583513e26fe18b8cf2827c74da94a4f0be",
+    "xarm7/visual/link6.stl": "85b320aa420497827223d16d492bba8de091173374e361396fc7a5dad7bdb0cb",
+    "xarm7/visual/link2.stl": "61e641cd47c169ecef779683332e00e4914db729bf02dfb61bfbe69351827455",
+    "gripper/xarm/right_inner_knuckle_g2.dae": "9e73e1fb4e65bc79dbaf2d8fe86fa835c67faa1e5ab08a8a55bec3b9023a1aa3",
+    "gripper/xarm/left_outer_knuckle_g2.dae": "b791ec24aae545a5dd70aefd12ddac6bdbecf74388ca2f655b34b140ae7da80b",
+    "gripper/xarm/left_inner_knuckle_g2.dae": "f12e642f44ce4a5b0c9bb2ed5c2cf4f9ea0a22b5e87839c29490e8eee6171b86",
+    "gripper/xarm/right_finger_g2.dae": "c2914ea791f520253e5536b0078f4e7e3b7b16112eb3dab21db2f5029c150b36",
+    "gripper/xarm/base_link_g2.dae": "d46f7e336755a7fd58ebee4b3eab2c6eca7eec611358fc6bf5f683e63efd7575",
+    "gripper/xarm/right_outer_knuckle_g2.dae": "d9ed7ed551136ecd57fe733c5e9c7e7fa70e10345e26441452122b6bba061f55",
+    "gripper/xarm/left_finger_g2.dae": "69c888529def394ddf00edfb11db061d300c586e6df681a33c894af5be14a59b"
+  }
+}

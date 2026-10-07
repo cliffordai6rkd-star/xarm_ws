@@ -1,0 +1,32 @@
+ERROR Tue Oct  6 17:44:55 2026: could not initialize GLFW
+
+ERROR Tue Oct  6 17:44:55 2026: could not initialize GLFW
+
+ERROR Tue Oct  6 17:47:16 2026: could not initialize GLFW
+
+ERROR Tue Oct  6 17:47:17 2026: could not initialize GLFW
+
+ERROR Tue Oct  6 17:47:39 2026: could not initialize GLFW
+
+ERROR Tue Oct  6 17:47:40 2026: could not initialize GLFW
+
+ERROR Tue Oct  6 17:48:41 2026: could not initialize GLFW
+
+ERROR Tue Oct  6 17:48:42 2026: could not initialize GLFW
+
+ERROR Tue Oct  6 17:49:35 2026: could not initialize GLFW
+
+ERROR Tue Oct  6 17:49:35 2026: could not initialize GLFW
+
+ERROR Tue Oct  6 19:01:39 2026: could not initialize GLFW
+
+ERROR Tue Oct  6 19:01:39 2026: could not initialize GLFW
+
+ERROR Tue Oct  6 19:05:53 2026: could not initialize GLFW
+
+ERROR Tue Oct  6 19:05:53 2026: could not initialize GLFW
+
+ERROR Tue Oct  6 22:13:43 2026: could not initialize GLFW
+
+ERROR Tue Oct  6 22:13:44 2026: could not initialize GLFW
+

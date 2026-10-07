@@ -470,6 +470,7 @@ class DualGelloPipeline:
 
     def __init__(self, config_path: str | Path, *, arm_factory: Callable | None = None,
                  reader_factory: Callable | None = None, torque_plot_enabled: bool | None = None,
+                 force_feedback_enabled: bool | None = None,
                  active_arms: list[str] | None = None, feedback_predictor_factory=None,
                  feedback_model_factory=None):
         self.config_path = Path(config_path).expanduser().resolve()
@@ -537,6 +538,11 @@ class DualGelloPipeline:
         feedback_block = self.raw.get('force_feedback', {})
         if not isinstance(feedback_block, dict) or type(feedback_block.get('enabled', False)) is not bool:
             raise ValueError('force_feedback must be a mapping with a boolean enabled flag')
+        if force_feedback_enabled is not None:
+            if type(force_feedback_enabled) is not bool:
+                raise ValueError('force_feedback_enabled must be a boolean or None')
+            feedback_block = {**feedback_block, 'enabled': force_feedback_enabled}
+            self.raw['force_feedback'] = feedback_block
         if feedback_block.get('enabled', False):
             for side, _, leader in self.configs:
                 if len(leader.joint_ids) != 7 or not leader.damping_enabled or leader.damping_mode != 'current':
@@ -551,6 +557,12 @@ class DualGelloPipeline:
                 self.torque_visualizer.cfg['force_feedback_mean_windows'] = {
                     side: settings.get('tau_ext_mean_window', 1)
                     for side, settings in self.force_feedback.settings.items()}
+                self.torque_visualizer.cfg['force_feedback_dynamics_methods'] = {
+                    side: settings.get('dynamics_method', 'rnea')
+                    for side, settings in self.force_feedback.settings.items()
+                    if settings.get('source') == 'urdf'}
+        log.info('GELLO 力反馈：%s；主手阻尼由 gello_damping 独立控制',
+                 '开启' if self.force_feedback is not None else '关闭')
         self.leader_max_age_s = float(self.control.get("leader_max_age_s", 0.15))
         self.leader_startup_timeout_s = float(self.control.get('leader_startup_timeout_s', 2.))
         if not np.isfinite(self.leader_startup_timeout_s) or self.leader_startup_timeout_s <= 0:
@@ -1684,10 +1696,14 @@ class DualGelloPipeline:
                     row = replace(row, force_feedback_values=self._force_feedback_values(
                         row.timestamp_us, results=tau_free_results))
                 if self.torque_visualizer is not None:
+                    plot_inputs = dict(q_cmd=row.q_cmd, q_cmd_valid=row.q_cmd_ok,
+                                       lowdim_timestamp_us=row.timestamp_us)
                     if self.force_feedback is not None and self.force_feedback.source == 'urdf':
-                        self.torque_visualizer.publish(self.ARM_NAMES, states, urdf_results=tau_free_results)
+                        self.torque_visualizer.publish(self.ARM_NAMES, states, urdf_results=tau_free_results,
+                                                       **plot_inputs)
                     else:
-                        self.torque_visualizer.publish(self.ARM_NAMES, states, tau_free_results=tau_free_results)
+                        self.torque_visualizer.publish(self.ARM_NAMES, states, tau_free_results=tau_free_results,
+                                                       **plot_inputs)
                 try:
                     self.sample_queue.put_nowait(row)
                 except queue.Full:
@@ -2114,7 +2130,12 @@ def main(argv=None):
     plot = parser.add_mutually_exclusive_group()
     plot.add_argument('--torque-plot', dest='torque_plot', action='store_true', help='开启七轴实测 / URDF 力矩对比图')
     plot.add_argument('--no-torque-plot', dest='torque_plot', action='store_false', help='关闭力矩实时图（无桌面数采）')
-    parser.set_defaults(torque_plot=None)
+    feedback = parser.add_mutually_exclusive_group()
+    feedback.add_argument('--force-feedback', dest='force_feedback', action='store_true',
+                          help='本次启用 GELLO 力反馈，覆盖 YAML 的 force_feedback.enabled')
+    feedback.add_argument('--no-force-feedback', dest='force_feedback', action='store_false',
+                          help='本次关闭 GELLO 力反馈，保留独立的主手阻尼')
+    parser.set_defaults(torque_plot=None, force_feedback=None)
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args(argv)
     logging.basicConfig(level=getattr(logging, args.log_level.upper()), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -2123,6 +2144,8 @@ def main(argv=None):
         overrides['torque_plot_enabled'] = args.torque_plot
     if args.active_arms is not None:
         overrides['active_arms'] = args.active_arms
+    if args.force_feedback is not None:
+        overrides['force_feedback_enabled'] = args.force_feedback
     pipeline = DualGelloPipeline(args.config, **overrides)
     user_exit = False
     exit_code = 0
@@ -2130,6 +2153,7 @@ def main(argv=None):
         if args.check_config:
             print(json.dumps({"state": pipeline.state, "arm_names": list(pipeline.ARM_NAMES),
                               "sample_rate_hz": pipeline.sample_rate_hz,
+                              "force_feedback_enabled": pipeline.force_feedback is not None,
                               "cameras": [camera.name for camera in pipeline.collection_config.cameras],
                               "gello_config": pipeline.raw.get("gello_config")}, indent=2))
             return 0

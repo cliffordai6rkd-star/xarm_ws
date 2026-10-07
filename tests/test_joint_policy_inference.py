@@ -11,7 +11,7 @@ import yaml
 
 from inference.core.contracts import ActionChunk
 from inference.joint_config import JointDeployment, load_joint_policy, resolve_checkpoint
-from inference.joint_runtime import JointInferenceRuntime, JointObservation, PolicyWorker
+from inference.joint_runtime import JointInferenceRuntime, JointObservation, PolicyWorker, StateReader, state_time
 from inference.policies.act import ACTPolicy
 from inference.policies.dp.policy import DiffusionPolicy
 from nero_collection.arms.mock import MockArm
@@ -92,6 +92,50 @@ def test_act_image_only_does_not_require_state_dim_to_match_q():
     assert torch.all(model.q == 0)
 
 
+def test_act_brightness_jitter_reaches_model_before_normalization_without_mutating_frames():
+    config, stats, shapes = act_fixture()
+    obs = observation()
+    for key, rgb in zip(config["camera_names"], ([0, 200, 255], [50, 128, 255])):
+        obs.images[key][:] = rgb
+    originals = {key: image.copy() for key, image in obs.images.items()}
+    model = FakeACT()
+    policy = ACTPolicy(model, config, stats, image_shapes=shapes,
+                       brightness_jitter=.2, brightness_seed=0)
+    factors = []
+    for _ in range(10):
+        chunk = policy.predict(obs)
+        factor = chunk.metadata["brightness_factor"]
+        factors.append(factor)
+        assert .8 <= factor <= 1.2
+        for index, key in enumerate(config["camera_names"]):
+            rgb = torch.tensor(originals[key][0, 0], dtype=torch.float32) / 255
+            expected = (torch.clamp(rgb * factor, 0, 1) -
+                        torch.tensor([.485, .456, .406])) / torch.tensor([.229, .224, .225])
+            torch.testing.assert_close(model.image[0, index, :, 0, 0], expected)
+            np.testing.assert_array_equal(obs.images[key], originals[key])
+        assert model.image.dtype == torch.float32
+        assert tuple(model.image.shape) == (1, 2, 3, 4, 5)
+    assert min(factors) < 1 < max(factors)
+
+
+def test_act_brightness_seed_replays_input_perturbations():
+    config, stats, shapes = act_fixture()
+    policies = [ACTPolicy(FakeACT(), config, stats, image_shapes=shapes,
+                          brightness_jitter=.2, brightness_seed=42) for _ in range(2)]
+    sequences = [[policy.predict(observation(red=128)).metadata["brightness_factor"]
+                  for _ in range(3)] for policy in policies]
+    assert sequences[0] == sequences[1]
+    assert len(set(sequences[0])) == 3
+    torch.testing.assert_close(policies[0].model.image, policies[1].model.image)
+
+
+@pytest.mark.parametrize("strength", [-.1, 1.1, float("nan"), float("inf")])
+def test_act_invalid_brightness_jitter_is_rejected(strength):
+    config, stats, shapes = act_fixture()
+    with pytest.raises(ValueError, match="brightness_jitter"):
+        ACTPolicy(FakeACT(), config, stats, image_shapes=shapes, brightness_jitter=strength)
+
+
 def test_act_pose_quaternion_target_is_rejected_before_model_import(tmp_path):
     config, stats, shapes = act_fixture()
     config["quaternion_indices"] = [3, 4, 5, 6]
@@ -99,6 +143,21 @@ def test_act_pose_quaternion_target_is_rejected_before_model_import(tmp_path):
         (tmp_path / name).write_bytes(pickle.dumps(value))
     with pytest.raises(ValueError, match="quaternion_indices"):
         ACTPolicy.from_checkpoint(tmp_path / "unused.ckpt", image_shapes=shapes, source_path=tmp_path)
+
+
+def test_cli_reports_contract_error_without_starting_hardware(monkeypatch, tmp_path, capsys):
+    from inference import joint_cli
+    from inference.policies.errors import JointActionContractError
+
+    def reject(config):
+        raise JointActionContractError("quaternion_indices invalid; retrain action.joint")
+    monkeypatch.setattr(joint_cli, "load_joint_policy", reject)
+    with pytest.raises(SystemExit) as error:
+        joint_cli.main(["--config", str(deployment_file(tmp_path)), "--run", "--enable-command"])
+    assert error.value.code == 2
+    stderr = capsys.readouterr().err
+    assert "quaternion_indices invalid" in stderr
+    assert "Traceback" not in stderr
 
 
 def test_act_rejects_invalid_normalizer_and_pose_targets():
@@ -224,6 +283,26 @@ def test_single_step_executes_one_full_chunk_then_pauses():
     assert {round(float(q[0]), 2) for q in arms["right"].commands} >= {.01, .02, .03}
 
 
+@pytest.mark.parametrize("enable_delay", [.11, .2])
+def test_slow_mode_switch_uses_new_prediction_after_enable(enable_delay):
+    runtime, arms, policy, _ = runtime_fixture(delay=.03)
+    runtime.config.execution.update(warmup_steps=0, maximum_prediction_age_s=.16)
+    policy.step_s = .02
+    enable = arms["right"].enable
+    ready_stamps = []
+    def slow_enable():
+        time.sleep(enable_delay)
+        enable()
+        ready_stamps.append(now_us())
+    arms["right"].enable = slow_enable
+    runtime.run(.45)
+    assert runtime.predictions >= 2
+    assert arms["right"].enables == arms["right"].stops == 1
+    assert policy.windows[0][-1].timestamp_us < ready_stamps[0]
+    assert any(window[-1].timestamp_us >= ready_stamps[0] for window in policy.windows[1:])
+    assert {round(float(q[0]), 2) for q in arms["right"].commands} >= {.01, .02, .03}
+
+
 def test_camera_loss_stops_every_enabled_arm():
     runtime, arms, _, _ = runtime_fixture(("left", "right"), outage_after=8)
     runtime.config.observation["maximum_camera_age_s"] = .03
@@ -232,16 +311,263 @@ def test_camera_loss_stops_every_enabled_arm():
     assert all(arm.stops == 1 and not arm._connected for arm in arms.values())
 
 
-def test_expired_inference_result_is_never_sent():
-    runtime, arms, _, _ = runtime_fixture(delay=.08)
-    runtime.config.execution["maximum_prediction_age_s"] = .025
-    with pytest.raises(RuntimeError, match="result expired"):
-        runtime.run(.3)
+def test_expired_startup_results_retry_but_timeout_without_enabling(caplog):
+    runtime, arms, policy, _ = runtime_fixture(delay=.08)
+    runtime.config.execution.update(warmup_steps=0, maximum_prediction_age_s=.025,
+                                    startup_timeout_s=.24)
+    with caplog.at_level("WARNING", logger="inference.joint_runtime"):
+        with pytest.raises(RuntimeError, match=r"Timed out.*expired_startup_predictions=[1-9].*last_startup_expiry=Policy result expired"):
+            runtime.run(.6)
+    assert len(policy.windows) >= 2
+    assert "Discarding expired startup prediction" in caplog.text
+    assert runtime.predictions == 0 and not runtime.prediction_latencies_s
     assert arms["right"].enables == 0 and not arms["right"].commands
 
 
-def test_invalid_joint_limits_reject_entire_chunk_before_either_arm_commands():
+@pytest.mark.parametrize("slow_request", [1, 2])
+def test_slow_result_after_warmup_or_mode_switch_retries_fresh_then_executes(slow_request, caplog):
+    runtime, arms, policy, _ = runtime_fixture()
+    runtime.config.execution.update(warmup_steps=1, maximum_prediction_age_s=.12,
+                                    startup_timeout_s=.4)
+    policy.step_s = .02
+    predict = policy.predict_observations
+    discarded = []
+    def slow_once(window):
+        if len(policy.windows) == slow_request:
+            time.sleep(.15)
+            assert arms["right"].enables == (0 if slow_request == 1 else 1)
+            # Before actual execution only a measured-q hold is permitted.
+            assert all(np.all(q == 0.) for q in arms["right"].commands)
+            chunk = predict(window)
+            discarded.append((chunk.timestamp_us, now_us()))
+            return ActionChunk(timestamp_us=chunk.timestamp_us, semantic="joint", frame_name=None,
+                               values=np.full_like(chunk.values, .8), step_s=chunk.step_s)
+        return predict(window)
+    policy.predict_observations = slow_once
+    keys = iter(["s"])
+    with caplog.at_level("WARNING", logger="inference.joint_runtime"):
+        runtime.run(.45, read_key=lambda _: next(keys, None), single_step=True)
+    assert "Discarding expired startup prediction #1" in caplog.text
+    assert runtime.predictions == 1 and len(policy.windows) == 4
+    assert policy.windows[slow_request + 1][-1].timestamp_us > discarded[0][1]
+    assert runtime.plan is None  # Single-step completes and pauses.
+    assert max(runtime.prediction_latencies_s) < .12
+    assert arms["right"].enables == arms["right"].stops == 1
+    assert {round(float(q[0]), 2) for q in arms["right"].commands} >= {.01, .02, .03}
+    assert all(np.all(q < .8) for q in arms["right"].commands)
+
+
+@pytest.mark.parametrize("open_loop", [False, True])
+def test_future_startup_result_is_rejected_without_retry(open_loop):
+    runtime, arms, policy, _ = runtime_fixture()
+    runtime.config.execution.update(warmup_steps=0, open_loop=open_loop)
+    predict = policy.predict_observations
+    def future_result(window):
+        chunk = predict(window)
+        return ActionChunk(timestamp_us=now_us() + 100_000, semantic="joint", frame_name=None,
+                           values=chunk.values, step_s=chunk.step_s)
+    policy.predict_observations = future_result
+    with pytest.raises(RuntimeError, match="Policy result expired.*age_ms=-"):
+        runtime.run(.3)
+    assert len(policy.windows) == 1
+    assert arms["right"].enables == 0 and not arms["right"].commands
+
+
+def test_open_loop_executes_late_chunks_in_order_and_holds_while_requesting(caplog):
+    runtime, arms, policy, _ = runtime_fixture(delay=.1)
+    runtime.config.execution.update(warmup_steps=0, open_loop=True, quiet=True,
+                                    log_timing=True, maximum_prediction_age_s=.03)
+    request_starts, installed = [], []
+    predict = policy.predict_observations
+    install = runtime._install
+    def tracked_predict(window):
+        request_starts.append(time.monotonic())
+        return predict(window)
+    def tracked_install(*args, **kwargs):
+        install(*args, **kwargs)
+        installed.append(runtime.plan_started)
+    policy.predict_observations = tracked_predict
+    runtime._install = tracked_install
+    with caplog.at_level("INFO", logger="inference.joint_runtime"):
+        runtime.run(.85)
+    assert runtime.predictions >= 2 and runtime._prefetch_s() == 0.
+    # Request 0 is the pre-enable preview, 1 is the first executed plan.
+    # Every later request begins after all three steps of the old plan.
+    for start, previous_install in zip(request_starts[2:], installed):
+        assert start - previous_install >= 3 * policy.step_s
+    assert len(installed) >= 2 and installed[1] - installed[0] >= 3 * policy.step_s + .1
+    targets = [round(float(q[0]), 2) for q in arms["right"].commands]
+    assert targets.count(.03) >= 5  # Last target continues during the slow request.
+    assert {.01, .02, .03} <= set(targets)
+    assert "cycle=1 status=complete" in caplog.text
+    assert "request_ms=" in caplog.text and "execute_ms=" in caplog.text and "total_ms=" in caplog.text
+    assert "command_ticks=" not in caplog.text  # Quiet mode suppresses status spam.
+    assert arms["right"].stops == 1
+
+
+def test_open_loop_still_stops_if_camera_disappears():
+    runtime, arms, _, _ = runtime_fixture(delay=.01, outage_after=15)
+    runtime.config.execution.update(warmup_steps=0, open_loop=True)
+    runtime.config.observation["maximum_camera_age_s"] = .03
+    with pytest.raises(RuntimeError, match="Checkpoint camera expired"):
+        runtime.run(.4)
+    assert arms["right"].stops == 1
+
+
+def test_cold_start_output_is_discarded_and_new_observation_is_used(caplog):
+    runtime, arms, policy, _ = runtime_fixture()
+    runtime.config.execution["maximum_prediction_age_s"] = .12
+    runtime.config.execution["startup_timeout_s"] = .4
+    policy.step_s = .01
+    predict = policy.predict_observations
+    def cold_start(window):
+        if not policy.windows:
+            time.sleep(.15)
+            assert not arms["right"].commands and arms["right"].enables == 0
+        return predict(window)
+    policy.predict_observations = cold_start
+    # The cold prediction exceeds the real-action deadline; execute only the
+    # next prediction from a newer observation, preserving one-chunk mode.
+    keys = iter(["s"])
+    with caplog.at_level("INFO", logger="inference.joint_runtime"):
+        runtime.run(.3, read_key=lambda _: next(keys, None), single_step=True)
+    assert "Policy warmup completed" in caplog.text
+    assert runtime.predictions == 1 and len(policy.windows) == 3
+    assert policy.windows[1][-1].timestamp_us > policy.windows[0][-1].timestamp_us
+    assert arms["right"].commands and arms["right"].enables == 1
+
+
+def test_warmup_timeout_does_not_enable_either_arm():
+    runtime, arms, _, _ = runtime_fixture(("left", "right"), delay=.15)
+    runtime.config.execution["startup_timeout_s"] = .04
+    with pytest.raises(RuntimeError, match=r"Timed out.*warmup_remaining=1, in_flight=True"):
+        runtime.run(.3)
+    assert all(arm.enables == 0 and not arm.commands and not arm._connected for arm in arms.values())
+
+
+def test_install_refreshes_clock_after_acquiring_new_observation(monkeypatch):
+    runtime, _, policy, _ = runtime_fixture()
+    stamp = now_us()
+    monkeypatch.setattr("inference.joint_runtime.now_us", lambda: stamp + 1_000)
+    chunk = policy.predict_observations((observation(stamp),))
+    # The iteration clock preceded camera polling, but the result is fresh.
+    runtime._install(chunk, .5, stamp - 10_000, time.monotonic() - 1.)
+    assert runtime.plan is chunk
+    assert time.monotonic() - runtime.plan_started < .02
+
+
+def test_install_checks_actual_result_age_instead_of_old_loop_clock(monkeypatch):
+    runtime, arms, policy, _ = runtime_fixture()
+    stamp = now_us()
+    monkeypatch.setattr("inference.joint_runtime.now_us", lambda: stamp + 600_000)
+    chunk = policy.predict_observations((observation(stamp),))
+    with pytest.raises(RuntimeError, match=r"age_ms=600.0.*maximum_age_ms=500.0.*infer_ms=550.0"):
+        runtime._install(chunk, 550., stamp + 10_000, time.monotonic())
+    assert runtime.plan is None and not arms["right"].commands
+
+
+def test_clock_refresh_does_not_allow_genuinely_future_result(monkeypatch):
+    runtime, _, policy, _ = runtime_fixture()
+    stamp = now_us()
+    monkeypatch.setattr("inference.joint_runtime.now_us", lambda: stamp)
+    chunk = policy.predict_observations((observation(stamp + 10_000),))
+    with pytest.raises(RuntimeError, match="age_ms=-10.0"):
+        runtime._install(chunk, .5, stamp, time.monotonic())
+    assert runtime.plan is None
+
+
+def test_no_new_aligned_observations_are_not_resubmitted():
+    runtime, arms, policy, _ = runtime_fixture()
+    runtime.config.execution["warmup_steps"] = 0
+    runtime.config.execution["maximum_prediction_age_s"] = .16
+    runtime.config.observation["maximum_alignment_gap_s"] = .001
+    # Model an aligner which produces one observation then cannot align new
+    # frames. Its last observation must not be submitted again indefinitely.
+    post_enable_observed = False
+    def observe_once(*args):
+        nonlocal post_enable_observed
+        # One preview before enable, one actual prediction after enable.
+        if not runtime.enabled or not post_enable_observed:
+            post_enable_observed = bool(runtime.enabled)
+            item = observation(now_us())
+            runtime.observations.append(item)
+            return (item,)
+        return None
+    runtime._observe = observe_once
+    with pytest.raises(RuntimeError, match="Policy target expired"):
+        runtime.run(.3)
+    assert len(policy.windows) == 2
+    assert arms["right"].stops == 1
+
+
+def test_ready_prediction_replaces_tail_before_source_age_budget_expires():
+    runtime, arms, policy, _ = runtime_fixture(delay=.01)
+    runtime.config.execution.update(warmup_steps=0, maximum_prediction_age_s=.18)
+    # A whole chunk lasts .24 s, longer than the observation age budget.
+    # A ready fresh plan must replace its otherwise expired tail.
+    policy.step_s = .08
+    runtime.run(.4)
+    assert runtime.predictions >= 2
+    assert arms["right"].commands and arms["right"].stops == 1
+
+
+@pytest.mark.parametrize("margin_s, expires", [(0.000001, True), (.1, False)])
+def test_prefetch_margin_handles_latency_increase_before_target_expires(margin_s, expires):
+    runtime, arms, policy, _ = runtime_fixture(delay=.12)
+    runtime.config.execution.update(warmup_steps=0, maximum_prediction_age_s=.6,
+                                    prediction_prefetch_margin_s=margin_s)
+    policy.step_s = .15  # 450 ms of actions; source age includes the 120 ms request.
+    predict = policy.predict_observations
+    def jitter(window):
+        # Preview and first executable request take 120 ms. The next request
+        # takes 180 ms, exhausting the old scheduler's one-tick slack.
+        if len(policy.windows) == 2:
+            time.sleep(.06)
+        return predict(window)
+    policy.predict_observations = jitter
+    if expires:
+        with pytest.raises(RuntimeError, match="Policy target expired"):
+            runtime.run(1.7)
+        assert runtime.predictions == 1
+    else:
+        runtime.run(1.7)
+        assert runtime.predictions >= 3
+    assert arms["right"].commands and arms["right"].stops == 1
+    assert not arms["right"]._connected
+
+
+def test_prefetch_retains_recent_slow_request_then_recovers():
+    runtime, _, _, _ = runtime_fixture()
+    runtime.config.execution["prediction_prefetch_margin_s"] = .15
+    runtime.inference_ms = 283.
+    assert runtime._prefetch_s() == pytest.approx(.443)
+    runtime.prediction_latencies_s.extend([.283, .35, .2])
+    assert runtime._prefetch_s() == pytest.approx(.51)
+    # Eight subsequent fast responses let the old spike leave the budget.
+    runtime.prediction_latencies_s.extend([.2] * 8)
+    assert runtime._prefetch_s() == pytest.approx(.36)
+
+
+def test_expiry_error_contains_prediction_and_alignment_diagnostics():
+    runtime, arms, policy, _ = runtime_fixture(delay=.01)
+    runtime.config.execution.update(warmup_steps=0, maximum_prediction_age_s=.16)
+    policy.step_s = .02
+    predict = policy.predict_observations
+    def stall_next_prediction(window):
+        # Preview and first real prediction complete normally, then stall.
+        if len(policy.windows) >= 2:
+            time.sleep(.2)
+        return predict(window)
+    policy.predict_observations = stall_next_prediction
+    with pytest.raises(RuntimeError, match=r"Policy target expired.*infer_ms=.*in_flight.*observation_age_ms"):
+        runtime.run(.4)
+    assert arms["right"].stops == 1 and not arms["right"]._connected
+
+
+@pytest.mark.parametrize("open_loop", [False, True])
+def test_invalid_joint_limits_reject_entire_chunk_before_either_arm_commands(open_loop):
     runtime, arms, _, _ = runtime_fixture(("left", "right"))
+    runtime.config.execution["open_loop"] = open_loop
     runtime.config.joint_limits["right"] = np.tile([-.005, .005], (7, 1))
     with pytest.raises(ValueError, match="outside joint limits on right"):
         runtime.run(.15)
@@ -303,6 +629,114 @@ def test_camera_and_joint_alignment_never_use_future_samples():
     assert all(timestamp <= anchor for timestamp in window[-1].image_timestamps_us.values())
 
 
+def test_host_receive_feedback_age_does_not_include_sdk_request_wait(monkeypatch):
+    runtime, _, _, _ = runtime_fixture()
+    stamp = now_us()
+    monkeypatch.setattr('inference.joint_runtime.now_us', lambda: stamp)
+    state = SimpleNamespace(q_acquired_timestamp_us=stamp - 200_000,
+                            acquired_timestamp_us=stamp - 200_000, timestamp_us=stamp - 1_000,
+                            q_timestamp_us=stamp - 1_000, timestamp_source='host_receive', q=np.zeros(7))
+    runtime.readers['right'].history.append(state)
+    assert runtime._states(stamp)['right'][-1] is state
+    assert state_time(state) == stamp - 1_000
+
+
+@pytest.mark.parametrize('offset,age_ms', [(-160_000, 160.), (1_000, -1.)])
+def test_feedback_expiry_reports_age_and_reader_diagnostics(monkeypatch, offset, age_ms):
+    runtime, _, _, _ = runtime_fixture()
+    stamp = now_us()
+    monkeypatch.setattr('inference.joint_runtime.now_us', lambda: stamp)
+    state = SimpleNamespace(q_acquired_timestamp_us=stamp + offset, acquired_timestamp_us=stamp + offset,
+                            timestamp_us=stamp + offset, q_timestamp_us=stamp + offset,
+                            timestamp_source='host_receive', q=np.zeros(7))
+    runtime.readers['right'].history.append(state)
+    with pytest.raises(RuntimeError, match='xArm feedback expired on right') as error:
+        runtime._states(stamp)
+    assert f'age_ms={age_ms:.1f}' in str(error.value)
+    assert 'maximum_age_ms=150.0' in str(error.value)
+    assert 'last_read_ms' in str(error.value) and 'read_in_flight_ms' in str(error.value)
+
+
+def test_host_receive_alignment_waits_for_reply_arrival_not_request_start(monkeypatch):
+    runtime, _, _, cameras = runtime_fixture()
+    stamp = now_us()
+    anchor = stamp - 10_000
+    monkeypatch.setattr('inference.joint_runtime.now_us', lambda: stamp)
+    cameras.poll = lambda: [CameraFrame(camera.name, anchor, np.zeros((4, 5, 3), np.uint8))
+                            for camera in cameras.cameras]
+    states = [SimpleNamespace(q_acquired_timestamp_us=anchor - 20_000,
+                              acquired_timestamp_us=anchor - 20_000,
+                              timestamp_us=anchor + offset, q_timestamp_us=anchor + offset,
+                              timestamp_source='host_receive', q=np.full(7, value))
+              for offset, value in ((-1_000, 1.), (1_000, 9.))]
+    window = runtime._observe({'right': states}, stamp)
+    np.testing.assert_array_equal(window[-1].q, np.ones(7))
+
+
+def test_state_reader_uses_joint_only_path_when_available():
+    entered = threading.Event()
+    stamp = now_us()
+    state = SimpleNamespace(q_valid=True, q=np.zeros(7), timestamp_us=stamp,
+                            acquired_timestamp_us=stamp, q_acquired_timestamp_us=stamp)
+    arm = SimpleNamespace(name='offline')
+    def joint_state():
+        entered.set()
+        return state
+    def full_state():
+        raise AssertionError('unnecessary full SDK state read')
+    arm.read_joint_state, arm.read_state = joint_state, full_state
+    reader = StateReader(arm, .01)
+    reader.thread.start()
+    try:
+        assert entered.wait(timeout=1.)
+    finally:
+        reader.stop.set()
+        reader.thread.join(timeout=1.)
+    assert reader.snapshot()[-1] is state
+    assert reader.diagnostics()['reads'] >= 1
+
+
+def test_feedback_disconnection_stops_open_loop_commands():
+    runtime, arms, _, _ = runtime_fixture()
+    runtime.config.execution.update(open_loop=True, warmup_steps=0)
+    runtime.config.observation['maximum_state_age_s'] = .04
+    observed_active_plan = False
+    def keys(_):
+        nonlocal observed_active_plan
+        if runtime.commands >= 3 and not observed_active_plan:
+            observed_active_plan = True
+            runtime.readers['right'].stop.set()  # Freeze the real mock reader's last sample.
+        return None
+    with pytest.raises(RuntimeError, match='xArm feedback expired on right'):
+        runtime.run(.35, read_key=keys)
+    assert observed_active_plan and arms['right'].stops == 1
+
+
+def test_post_enable_observation_requires_new_frames_and_states_from_every_source():
+    runtime, _, _, cameras = runtime_fixture()
+    stamp = now_us()
+    runtime.execution_observation_after_us = stamp - 20_000
+    anchor = stamp - 10_000
+    cameras.poll = lambda: []
+    rgb = np.zeros((4, 5, 3), np.uint8)
+    runtime.frames["left_wrist"].extend([
+        CameraFrame("left_wrist", stamp - 25_000, rgb),
+        CameraFrame("left_wrist", stamp - 5_000, rgb)])
+    runtime.frames["right_wrist"].append(CameraFrame("right_wrist", anchor, rgb))
+    state = SimpleNamespace(q_acquired_timestamp_us=stamp - 21_000, acquired_timestamp_us=0,
+                            timestamp_us=stamp - 21_000, q=np.zeros(7))
+    assert runtime._observe({"right": [state]}, stamp) is None
+    assert "post-enable camera frame: left_wrist" in runtime.observation_wait
+    runtime.frames["left_wrist"].insert(1, CameraFrame("left_wrist", stamp - 15_000, rgb))
+    assert runtime._observe({"right": [state]}, stamp) is None
+    assert "post-enable xArm state: right" in runtime.observation_wait
+    state.q_acquired_timestamp_us = anchor - 1_000
+    window = runtime._observe({"right": [state]}, stamp)
+    assert window[-1].timestamp_us == anchor
+    assert all(value >= runtime.execution_observation_after_us
+               for value in window[-1].image_timestamps_us.values())
+
+
 def deployment_file(tmp_path):
     checkpoint = tmp_path / "test.ckpt"
     checkpoint.touch()
@@ -326,6 +760,29 @@ def test_hardware_config_is_loaded_without_connecting(tmp_path):
     assert config.endpoints["right"].config_kwargs["robot_ip"] == "192.168.1.196"
     assert not config.endpoints["right"].config_kwargs["execution_enabled"]
     assert config.joint_limits["right"].shape == (7, 2)
+    assert config.execution["prediction_prefetch_margin_s"] == .1
+    assert config.execution["open_loop"] is False
+    assert config.execution["reset_on_start"] is False
+
+
+@pytest.mark.parametrize("margin", [-.1, 0., float("nan"), float("inf")])
+def test_invalid_prediction_prefetch_margin_is_rejected(tmp_path, margin):
+    path = deployment_file(tmp_path)
+    data = yaml.safe_load(path.read_text())
+    data["execution"] = {"prediction_prefetch_margin_s": margin}
+    path.write_text(yaml.safe_dump(data))
+    with pytest.raises(ValueError, match="prediction_prefetch_margin_s"):
+        JointDeployment.load(path)
+
+
+@pytest.mark.parametrize("key", ["open_loop", "reset_on_start", "quiet", "log_timing"])
+def test_execution_flags_require_boolean(tmp_path, key):
+    path = deployment_file(tmp_path)
+    data = yaml.safe_load(path.read_text())
+    data["execution"] = {key: "false"}
+    path.write_text(yaml.safe_dump(data))
+    with pytest.raises(ValueError, match=key):
+        JointDeployment.load(path)
 
 
 def test_model_arm_dimension_and_missing_cameras_checked_before_hardware(monkeypatch, tmp_path):
@@ -342,3 +799,176 @@ def test_model_arm_dimension_and_missing_cameras_checked_before_hardware(monkeyp
     config.cameras = (CameraConfig("right_wrist"),)
     with pytest.raises(ValueError, match="missing from hardware config"):
         load_joint_policy(config)
+
+
+def test_mode_switch_discards_cached_and_queued_frames_then_recovers(monkeypatch):
+    runtime, arms, _, cameras = runtime_fixture()
+    runtime.config.observation["maximum_camera_age_s"] = .3
+    clock = {"stamp": now_us()}
+    monkeypatch.setattr("inference.joint_runtime.now_us", lambda: clock["stamp"])
+    rgb = np.zeros((4, 5, 3), np.uint8)
+    before_enable = clock["stamp"]
+    for name, history in runtime.frames.items():
+        history.append(CameraFrame(name, before_enable, rgb))
+    runtime.observations.append(observation(before_enable))
+
+    def state(stamp):
+        return SimpleNamespace(q_acquired_timestamp_us=stamp,
+                               acquired_timestamp_us=stamp, timestamp_us=stamp,
+                               q=np.zeros(7))
+
+    runtime.readers["right"].history.append(state(before_enable))
+    enable = arms["right"].enable
+
+    def slow_enable():
+        enable()
+        # Model a 400 ms SDK switch without sleeping or using real hardware.
+        clock["stamp"] += 400_000
+        runtime.readers["right"].history.append(state(clock["stamp"] - 1_000))
+
+    arms["right"].enable = slow_enable
+    arms["right"].connect()
+    try:
+        runtime._prepare_arms()
+        assert runtime.execution_observation_after_us == clock["stamp"]
+        assert not runtime.observations
+        assert all(not history for history in runtime.frames.values())
+        histories = {"right": runtime.readers["right"].snapshot()}
+        cameras.poll = lambda: []
+        assert runtime._observe(histories, clock["stamp"]) is None
+
+        # IPC may still deliver a packet captured before the blocking switch.
+        cameras.poll = lambda: [CameraFrame(name, before_enable, rgb)
+                               for name in runtime.frames]
+        assert runtime._observe(histories, clock["stamp"]) is None
+        assert all(not history for history in runtime.frames.values())
+
+        clock["stamp"] += 20_000
+        acquired = clock["stamp"] - 1_000
+        cameras.poll = lambda: [CameraFrame(name, acquired, rgb)
+                               for name in runtime.frames]
+        window = runtime._observe({"right": [state(acquired)]}, clock["stamp"])
+        assert window[-1].timestamp_us == acquired
+        assert all(stamp >= runtime.execution_observation_after_us
+                   for stamp in window[-1].image_timestamps_us.values())
+    finally:
+        runtime._stop_motion()
+        arms["right"].disconnect()
+
+
+def test_startup_ignores_queued_old_frames_and_waits_for_fresh_samples():
+    runtime, arms, policy, cameras = runtime_fixture(enabled=False)
+    runtime.config.execution["warmup_steps"] = 0
+    runtime.config.observation["maximum_camera_age_s"] = .3
+    poll = cameras.poll
+    first_poll = True
+
+    def initially_queued_frames():
+        nonlocal first_poll
+        if first_poll:
+            first_poll = False
+            stale = now_us() - 400_000
+            return [CameraFrame(camera.name, stale, np.zeros((4, 5, 3), np.uint8))
+                    for camera in cameras.cameras]
+        return poll()
+
+    cameras.poll = initially_queued_frames
+    runtime.run(.15)
+    assert runtime.predictions >= 1
+    assert policy.windows
+    assert all(window[-1].timestamp_us >= runtime.execution_observation_after_us
+               for window in policy.windows)
+    assert arms["right"].enables == 0 and not arms["right"].commands
+
+
+def test_no_post_enable_frames_waits_for_startup_timeout_and_stops_arm():
+    runtime, arms, _, cameras = runtime_fixture()
+    runtime.config.execution.update(warmup_steps=0, startup_timeout_s=.12)
+    runtime.config.observation["maximum_camera_age_s"] = .3
+    enable = arms["right"].enable
+    poll = cameras.poll
+
+    def slow_enable():
+        time.sleep(.32)
+        enable()
+
+    arms["right"].enable = slow_enable
+    cameras.poll = lambda: [] if arms["right"].enables else poll()
+    with pytest.raises(RuntimeError, match=r"Timed out waiting for cameras"):
+        runtime.run(.7)
+    assert runtime.predictions == 0
+    assert arms["right"].enables == arms["right"].stops == 1
+    assert not arms["right"]._connected and cameras.stopped
+    # Preparation holds measured q once; an expired pre-switch model target
+    # must never reach the mock command sink.
+    assert len(arms["right"].commands) == 1
+    np.testing.assert_array_equal(arms["right"].commands[0], np.zeros(7))
+
+
+@pytest.mark.parametrize("timestamp_offset,age_ms", [(10_000, -10.0), (-400_000, 400.0)])
+def test_camera_expiry_reports_actual_age_and_limit(monkeypatch, timestamp_offset, age_ms):
+    runtime, _, _, cameras = runtime_fixture()
+    runtime.config.observation["maximum_camera_age_s"] = .3
+    stamp = now_us()
+    monkeypatch.setattr("inference.joint_runtime.now_us", lambda: stamp)
+    cameras.poll = lambda: [CameraFrame(camera.name, stamp + timestamp_offset,
+                                       np.zeros((4, 5, 3), np.uint8))
+                            for camera in cameras.cameras]
+    with pytest.raises(RuntimeError, match="Checkpoint camera expired") as error:
+        runtime._observe({"right": []}, stamp)
+    assert f"age_ms={age_ms:.1f}" in str(error.value)
+    assert "maximum_age_ms=300.0" in str(error.value)
+
+
+@pytest.mark.parametrize("lead_us", [1, 100, 5_000])
+def test_small_camera_clock_lead_waits_until_frame_is_causal(monkeypatch, lead_us):
+    runtime, _, _, cameras = runtime_fixture()
+    stamp = now_us()
+    clock = {"now": stamp}
+    monkeypatch.setattr("inference.joint_runtime.now_us", lambda: clock["now"])
+    frames = [CameraFrame(camera.name, stamp + lead_us,
+                          np.zeros((4, 5, 3), np.uint8)) for camera in cameras.cameras]
+    cameras.poll = lambda: frames
+    state = SimpleNamespace(q_acquired_timestamp_us=stamp,
+                            acquired_timestamp_us=stamp, timestamp_us=stamp,
+                            q=np.zeros(7))
+    histories = {"right": [state]}
+    assert runtime._observe(histories, stamp) is None
+    assert "waiting for host clock" in runtime.observation_wait
+    assert not runtime.observations
+    # Retain the original device-mapped timestamp, not a clamped replacement.
+    assert all(history[-1].timestamp_us == stamp + lead_us for history in runtime.frames.values())
+    cameras.poll = lambda: []
+    clock["now"] += lead_us
+    window = runtime._observe(histories, clock["now"])
+    assert window[-1].timestamp_us == stamp + lead_us
+    assert window[-1].timestamp_us <= clock["now"]
+
+
+def test_clock_refresh_after_camera_poll_accepts_newly_acquired_frame(monkeypatch):
+    runtime, _, _, cameras = runtime_fixture()
+    stamp = now_us()
+    clock = {"now": stamp}
+    monkeypatch.setattr("inference.joint_runtime.now_us", lambda: clock["now"])
+    def poll():
+        clock["now"] += 10_000
+        return [CameraFrame(camera.name, clock["now"], np.zeros((4, 5, 3), np.uint8))
+                for camera in cameras.cameras]
+    cameras.poll = poll
+    state = SimpleNamespace(q_acquired_timestamp_us=stamp,
+                            acquired_timestamp_us=stamp, timestamp_us=stamp,
+                            q=np.zeros(7))
+    window = runtime._observe({"right": [state]}, stamp)
+    assert window[-1].timestamp_us == clock["now"]
+
+
+def test_small_clock_lead_does_not_hide_expired_other_camera(monkeypatch):
+    runtime, _, _, cameras = runtime_fixture()
+    stamp = now_us()
+    monkeypatch.setattr("inference.joint_runtime.now_us", lambda: stamp)
+    rgb = np.zeros((4, 5, 3), np.uint8)
+    cameras.poll = lambda: [CameraFrame("left_wrist", stamp + 100, rgb),
+                            CameraFrame("right_wrist", stamp - 200_000, rgb)]
+    with pytest.raises(RuntimeError, match="Checkpoint camera expired: right_wrist"):
+        runtime._observe({"right": []}, stamp)
+    assert not runtime.observations

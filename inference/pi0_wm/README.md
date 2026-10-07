@@ -1,8 +1,16 @@
 # π0 LoRA → CaRS-WM → q
 
-独立入口 `scripts/run_pi0_wm.py`，独立配置 `inference/configs/pi0_wm.yaml`。
+公共入口 `python -m inference.cli --config inference/configs/pi0_wm.yaml`，
+旧命令 `scripts/run_pi0_wm.py` 作为兼容入口复用同一键盘循环。
+`pi0_wm_xarm.yaml` 当前改为直接关节 π0 接口（WM 关闭），使用公共 `inference.cli`；
+双路图像、零状态、mock 协议和训练动作语义的核对说明见 [`../README.md`](../README.md)。
 不导入旧 DP runtime、TimestampFastSlowRuntime 或 ContactWMInferencePipeline。
 不会加载 DP checkpoint，不实现 MTC、MIT 力矩、WM τ 前馈或 MPC。
+
+默认等待 `s` 开始，`i` 停止并复位后继续等待 `s`，`p` 保持当前姿态，`q` 退出。
+`hardware.reset_q` 配置复位目标；未填写时优先使用 endpoint 的 `rest_q`，否则返回启动实测姿态。
+`--auto-start` 可跳过等待；`--single-step` 下每次 `s` 执行一个有效控制周期后暂停。
+标定阶段同样响应按键，取消的旧请求不会用于下一次推理。
 
 ## 文件
 
@@ -128,7 +136,7 @@ python /path/to/Nero_ws/scripts/serve_pi0_wm.py \
 
 ```bash
 # 无 server、无硬件；包含独立 MuJoCo FK worker 的全 mock 验证
-.venv/bin/python scripts/run_pi0_wm.py --mock --headless --steps 260
+.venv/bin/python -m inference.cli --config inference/configs/pi0_wm_mock.yaml --mock --headless --auto-start --steps 260
 
 # 已配置真实 server / WM / 相机 / CAN，只观察与预测，不下发
 .venv/bin/python scripts/run_pi0_wm.py --config inference/configs/pi0_wm.yaml --dry-run
@@ -144,7 +152,7 @@ python /path/to/Nero_ws/scripts/serve_pi0_wm.py \
 
 ```bash
 .venv/bin/python scripts/mock_pi0_wm_server.py --config /absolute/mock.yaml --port 8000
-.venv/bin/python scripts/run_pi0_wm.py --config /absolute/mock.yaml --dry-run --headless --steps 260
+.venv/bin/python scripts/run_pi0_wm.py --config /absolute/mock.yaml --dry-run --headless --auto-start --steps 260
 # 如果只验证协议和调度，可额外传 --mock-wm；此选项禁止真实下发。
 ```
 

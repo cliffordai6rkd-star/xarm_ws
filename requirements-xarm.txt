@@ -11,7 +11,7 @@ h5py>=3.11
 # opencv-python>=4.8
 # pyrealsense2
 # mujoco>=3.1
-# rerun-sdk
-# torch==2.8.0  # optional tau_free GELLO feedback; RTX 5090: --index-url https://download.pytorch.org/whl/cu128
+# rerun-sdk==0.26.2  # offline H5 browser / Rerun Viewer (requires numpy>=2)
+# torch==2.8.0  # learned_torque plots / optional tau_free feedback; RTX 5090: --index-url https://download.pytorch.org/whl/cu128
 # pyzmq>=25
 # lerobot==0.4.0  # optional DP checkpoint backend

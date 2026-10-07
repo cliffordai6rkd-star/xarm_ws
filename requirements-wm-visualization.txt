@@ -1,0 +1,2 @@
+# Optional shared WM MuJoCo joint torque preview (install in inference environment).
+mujoco>=3.1,<4

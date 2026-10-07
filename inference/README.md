@@ -1,5 +1,218 @@
 # xArm / Nero 模型推理
 
+在线推理统一通过 `python -m inference.cli --config <配置文件> --run` 启动。
+入口在 `inference/interactive.py` 中统一管理键盘和按键含义，DP、ACT、π0、π0-WM 和 Nero
+运行时共用：默认等待 `s` 开始连续推理，`i` 停止推理并复位，复位后继续等待 `s`。
+`p` 暂停，`c` 开始连续推理，`q` / Ctrl-C 退出；复位和退出的硬件动作由各运行时执行。
+`--enable-command` 开启机械臂命令；只读模式下 `i` 仅清空推理状态，不移动机械臂。
+`--auto-start` 可跳过启动等待，`--single-step` 则让每次 `s` 只执行一段动作后暂停。
+
+## DP → latent WM：独立异步、只读观测
+
+新配置 `inference/configs/dp_wm_xarm.yaml` 使用削黄瓜 DP 权重和 50000 步 latent WM。
+DP 目标 25 Hz 输出当前＋未来 8 步计划，WM 根据 `execute_steps` 规划更新周期，
+仅保存 q/tau/接触预测，不接运动控制。`--check` 只读取 CPU 元数据；
+`--run --mock --auto-start --duration 5` 可验证调度而不连接硬件或加载模型。
+真实运行用 `--run`，按 s 开始；该分支不接受 `--enable-command`，i 只暂停。
+输入契约、控制器参考角与训练 q_cmd 的区别、依赖和输出文件见
+[DP-WM 文档](dp_wm/README.md)。
+
+## xArm：远端 π0 输出关节 q
+
+本地通过 `pi0.action_type` 选择动作适配：`joint` 直接将七轴绝对关节角交给
+现有执行器，`eepose` 先用本地 Pinocchio IK 转为七轴关节目标。两者共用公共入口、
+相机、观测对齐、动作分段和 `s/i/p/q` 按键。WM 保持关闭。
+
+当前关节模型使用 `inference/configs/pi0_wm_xarm.yaml`，其中：
+
+```yaml
+pi0:
+  action_type: joint
+  interface:
+    action_semantic: action.joint
+    coordinate_frame: null
+    representation: joint_positions
+    units: rad
+    joint_names: [joint1, joint2, joint3, joint4, joint5, joint6, joint7]
+```
+
+EE-pose 模型的完整示例见 `inference/configs/pi0_eepose_xarm.yaml`。它接收基座坐标系下
+`xyz [m] + quaternion` 的七维绝对位姿，支持 `xyzw` 和 `wxyz`，使用同一双路图像及零状态输入：
+
+```yaml
+pi0:
+  action_type: eepose
+  interface:
+    action_semantic: action.ee_pose
+    coordinate_frame: link7
+    reference_frame: base
+    representation: xyz_quaternion
+    quaternion_order: xyzw
+    units: m
+ik:
+  urdf_path: ../../gello_teleop/models/xarm7_dynamics.urdf
+  frame_name: link7
+  max_iterations: 100
+  position_tolerance_m: 0.0001
+  rotation_tolerance_rad: 0.001
+```
+
+EE-pose 示例的 `training_config` 须换成实际训练 EE-pose 的配置名称，两端完整的
+`pi0.interface` 必须一致。`action_type` 只选择本地解释和执行分支，不会改变模型的训练目标。
+当前已审计的 `pi0_xarm_lora_erase_board` 应使用 `joint`。
+
+首个 IK 目标以这次对齐观测中的实测 q 为种子，后续目标以刚解出的 q 为种子。
+求解器约束 URDF/执行配置的关节限位，校验单位四元数，并拒绝不可达或不收敛的整段动作；
+成功后再由现有关节执行器处理步长、速度和加速度。joint 分支不构建 IK 模型，也不处理四元数。
+
+若动作描述 TCP，但 URDF 只包含 `link_eef`，显式填写 URDF 帧到 TCP 的固定偏移，
+数值必须来自实际工具标定：
+
+```yaml
+# pi0.interface.coordinate_frame: tcp
+ik:
+  frame_name: link_eef
+  frame_offset_xyz_rpy: [0.0, 0.0, 0.08, 0.0, 0.0, 0.0]  # 示例：m / rad；替换成实际值
+```
+
+目标先按 `T_base_URDF = T_base_TCP @ inv(T_URDF_TCP)` 转换再求解。
+模型帧与动作帧不同而未提供偏移时会拒绝启动。
+
+无硬件验证 EE-pose 分支（服务端、相机、机械臂均 mock；IK 使用真实 URDF）：
+
+```bash
+python -m inference.cli --config inference/configs/pi0_eepose_xarm.yaml --check
+python -m inference.cli --config inference/configs/pi0_eepose_xarm.yaml \
+  --backend mock --mock-policy --enable-command --auto-start --duration 2
+```
+
+`inference/configs/pi0_wm_xarm.yaml` 已改为 `policy.type: pi0`，接入 DP/ACT 共用的
+关节执行器。文件名保留，但当前是 π0 → 绝对关节角 → xArm SDK，`wm.enabled: false`。
+它复用 `hardware_config` 中的机械臂 IP、双路相机、关节限位和标定复位位置，
+不需要 ZMQ bridge、WM checkpoint 或 GELLO 主手连接；当前控制右臂。
+
+训练配置 `pi0_xarm_lora_erase_board` 使用 `ZeroObservationState` + `LiberoInputs`。
+客户端发送下面的**字面量字段名**（`/` 不表示嵌套字典），不重复归一化：
+
+| 数据/硬件输入 | WebSocket 字段 | LiberoInputs 内部位置 |
+| --- | --- | --- |
+| left_wrist，224×224 RGB uint8 | observation/image | base_0_rgb |
+| right_wrist，224×224 RGB uint8 | observation/wrist_image | left_wrist_0_rgb |
+| 7 维 float32 零向量 | observation/state | state；服务端仍保留 ZeroObservationState |
+| 任务文本 | prompt | prompt |
+
+服务端使用实际训练配置和 `create_trained_policy()` 恢复 checkpoint 的 normalization 和
+输入/输出变换；它默认接收 repack **之后**的输入，所以客户端直接发送上表字段。
+`LiberoOutputs` 截取前 7 维，客户端要求收到有限 `[50,7]` 物理动作，消费前 20 步后滚动更新。
+动作时间步是 1/30 秒，100 Hz 控制循环按经过的时间选取动作，不把 100/30 取整。
+输出不做四元数归一化、IK 或额外反归一化。
+
+**当前训练动作映射已核实**：服务器对 `pi0_xarm_lora_erase_board` 实际训练数据的审计
+确认 29,605 行 `action` 与 `action.joint` 完全一致，最大差为零，无 `action.ee_pose` 列。
+结合原始 xArm 数据及已提供的 `ZeroObservationState`、`LiberoInputs`/`LiberoOutputs`
+变换，当前输出按 J1～J7 的绝对关节角（rad）解释。一次录制双路图像的真实远程调用
+返回有限 `[50,7]`，预热后该次服务端推理约 90 ms。此结论只对应本次审计的训练数据和模型。
+服务端 YAML 须使用与本地相同的完整 `pi0.interface`：`state_semantic: zero`、
+`representation: joint_positions`、`coordinate_frame: null`、`units: rad` 和七轴名称。
+删除旧的 `quaternion_order`；更新文件后重启服务端，metadata 才会更新。
+仅修改部署 YAML 不会改变模型训练的动作语义。
+
+使用 `scripts/check_pi0_action_mapping.py` 在实际服务器环境核对注册的 TrainConfig、
+LeRobot 缓存路径、RepackTransform 和全部训练 Parquet 行。脚本逐行比较训练动作列与
+`action.joint`、`action.ee_pose`，只在唯一候选全部完全一致时报告 `joint` 或 `eepose`；
+缺少来源列或存在歧义时报告 `unverified`。它同时列出输入/输出变换，不连接硬件。
+
+```bash
+# 本地上传审计脚本，SSH 端口/主机使用实际 AutoDL 登录信息
+scp -P 47338 scripts/check_pi0_action_mapping.py \
+  root@connect.weste.seetacloud.com:/root/autodl-tmp/openpi/scripts/
+# 在服务器 openpi 项目根目录运行
+uv run scripts/check_pi0_action_mapping.py --train-config pi0_xarm_lora_erase_board
+```
+
+本地原始数据也可独立核对，但不能代替实际服务器转换后数据的检查：
+
+```bash
+python scripts/check_pi0_action_mapping.py \
+  --dataset-root runs/erase_board_lerobotv3 --action-key action.joint
+```
+
+首次远程推理可能触发 JAX 编译和 cuDNN 算法选择。客户端关闭自动 ping 超时机制，
+由 `pi0.request_timeout_s` 限制连接和每次接收的等待时间，避免慢编译被误判为心跳掉线。
+当前请求等待上限为 180 秒，启动等待上限为 240 秒；首次预热输出会被丢弃，之后
+使用新观测重新预测。部署前也可先在服务器预热。
+
+`pi0_wm_xarm.yaml` 默认设置 `pi0.local: false`，让 gello 通过 localhost:8000
+连接独立的 openpi 推理进程。两个终端均在 xarm_ws 目录运行：
+
+```bash
+# 终端 1：openpi 环境加载模型并提供真实推理服务（需要空闲显存）
+/home/eid/code/openpi/.venv/bin/python scripts/serve_pi0_wm.py \
+  --config inference/configs/pi0_wm_xarm.yaml
+# 终端 2：gello 环境负责相机和机械臂；服务就绪后启动
+conda activate gello
+python -m inference.cli --config inference/configs/pi0_wm_xarm.yaml --enable-command
+```
+
+服务端读取同一份 YAML 的权重路径和接口信息，不连接相机或机械臂。
+给服务端命令加 `--check` 只检查配置及文件，不加载模型或监听端口。
+
+可选设置 `pi0.local: true` 在客户端进程内直接读取
+`pi0.local_checkpoint` 指定的 checkpoint 步数目录（包含 `params/` 和 `assets/`），
+通过 `pi0.local_source_path` 使用本地 openpi 源码。需要使用 openpi 训练环境的 Python，
+并安装机器人端所需依赖；模型仅在实际预测时加载，普通 `--check` 不加载权重。
+本地模式同样需要推理显存，不会降低模型的显存需求；`--check-server` 会触发模型加载。
+当前配置对应 peel_cucumber 的三路相机、25 Hz 和 20000 步权重。
+
+设 `pi0.local: false` 可切回 `host` / `port` 的 WebSocket 服务（包括下面的 mock server）；
+远程服务器需要使用相同的训练权重和 `pi0.interface`。
+远程模式机器人端依赖只需 websocket/msgpack，官方 NumPy codec 通过 `policy.client_source_path`
+读取本地 openpi-client 源码，不安装整个训练环境，不改 NumPy 版本：
+
+```bash
+pip install -r requirements-pi0-joint.txt
+# 仅配置检查：不连接服务端、相机或机械臂
+python -m inference.cli --config inference/configs/pi0_wm_xarm.yaml --check
+# 完全离线：模型、机械臂和相机全部 mock，默认等 s；i 停止并复位
+python -m inference.cli --config inference/configs/pi0_wm_xarm.yaml \
+  --backend mock --mock-policy --enable-command
+```
+
+实际 WebSocket 协议可用本地 mock server 验证（两个终端）：
+
+```bash
+python scripts/mock_pi0_joint_server.py --config inference/configs/pi0_wm_xarm.yaml
+python -m inference.cli --config inference/configs/pi0_wm_xarm.yaml \
+  --backend mock --enable-command
+```
+
+Mock server 在 metadata 标记 `mock_policy: true`，客户端拒绝将它用于真机 backend。
+离线自动回归可在客户端命令后加 `--auto-start --duration 2`。
+实际服务端恢复后，设置 `pi0.host/port`，并把同一份 `pi0.interface` 同步到服务端 YAML。
+先用以下命令只核对 metadata，再用默认只读模式观察；动作执行增加 `--enable-command`。
+`s/i/p/q` 全部沿用公共入口，命令开启时 `i` 返回硬件配置中的右臂标定 `reset_q`。
+
+```bash
+python -m inference.cli --config inference/configs/pi0_wm_xarm.yaml --check --check-server
+python -m inference.cli --config inference/configs/pi0_wm_xarm.yaml
+```
+
+## π0 EE-pose → WM
+
+EE-pose/WM 流程仍使用 `inference/configs/pi0_wm.yaml`，由公共入口根据独立 `pi0` 配置分派。
+相机、服务端和 WM 权重仍需填入真实部署值；`--check` 检查配置、文件和依赖，不连接硬件。
+模拟验证可使用：
+
+```bash
+python -m inference.cli --config inference/configs/pi0_wm_mock.yaml --mock --headless --auto-start --steps 260
+```
+
+π0-WM 默认等待 `s`，开始后填充新观测历史并进行测速标定；测速期间也可按 `i/p/q`。
+`i` 清空旧计划，按 `hardware.reset_speed_rad_s` 返回 `hardware.reset_q`，到位后继续等待 `s`。
+`reset_q: null` 时优先使用 endpoint 的 `rest_q`，否则返回本次启动的实测姿态。
+只读模式不使能或复位真机。`--single-step` 下每次 `s` 仅执行一个有效 WM 控制周期。
+旧命令 `scripts/run_pi0_wm.py` 也复用公共键盘循环，兼容 `--enable-commands` 参数。
+
 ## xArm：Diffusion Policy、ACT 输出关节 q
 
 现在 `inference.cli` 支持两个 xArm 配置：
@@ -27,16 +240,32 @@ python -m inference.cli --config inference/configs/dp_xarm.yaml --active-arms ri
 python -m inference.cli --config inference/configs/act_xarm.yaml --checkpoint /path/to/act/policy_best.ckpt --active-arms right --check
 ```
 
+也可复用 `gello` 环境。当前环境已有 `torch==2.8.0+cu128` 时，安装对应的
+`torchvision==0.23.0+cu128` 以及 native DP 依赖：
+
+```bash
+conda activate gello
+# PyTorch 2.8.0 + CUDA 12.8 的对应 torchvision；已有 torch、numpy、Pillow。
+python -m pip install torchvision==0.23.0+cu128 --index-url https://download.pytorch.org/whl/cu128 --no-deps
+python -m pip install -r requirements-inference-native.txt
+python -m inference.cli --config inference/configs/dp_xarm.yaml --active-arms right --check
+```
+
+版本配套依据见 [PyTorch 官方版本表](https://pytorch.org/get-started/previous-versions/#v280)。
+`requirements-inference-native.txt` 固定了当前 checkpoint 使用的 Diffusers 和
+Hugging Face Hub 配套版本，并补齐 OmegaConf、Hydra、Dill、Einops、Zarr 等依赖。
 完整依赖见 `requirements-inference.txt`。ACT 默认从相邻的 `../act` 源码目录构建模型，
 可用 `policy.source_path` 修改；仅加载 checkpoint 权重，不创建训练优化器或下载预训练 backbone。
 DP 默认配置指向当前找到的 joint checkpoint；路径相对于 YAML。
+ACT 默认使用 `../act/outputs/erase_board_joint/policy_last.ckpt`，
+读取权重所在目录的配置与归一化统计；可通过 `policy.checkpoint` 修改路径。
 `--checkpoint`、`--device` 可以在命令行覆盖；ACT 输出目录优先选 `policy_best.ckpt`，
 否则在启动时选最新 epoch，运行中不更换权重。
 
 模拟相机和机械臂跑通模型到 q 执行链路：
 
 ```bash
-python -m inference.cli --config inference/configs/dp_xarm.yaml --active-arms right --device cpu --backend mock --enable-command --duration 5
+python -m inference.cli --config inference/configs/dp_xarm.yaml --active-arms right --device cpu --backend mock --enable-command --auto-start --duration 5
 ```
 
 真机读取观测并推理（默认不使能、不发送 q）：
@@ -52,16 +281,71 @@ python -m inference.cli --config inference/configs/dp_xarm.yaml --active-arms ri
 python -m inference.cli --config inference/configs/act_xarm.yaml --checkpoint /path/to/joint_act/policy_best.ckpt --active-arms right --run --enable-command
 ```
 
-`c` 连续推理、`p` 暂停并停止机械臂、`s` 执行一个完整 action chunk 后暂停、
-`q` / Ctrl-C 停止并退出；`--single-step` 以暂停状态启动。进入执行时从实际 q 初始化位置参考，
-不自动回零；退出时停止位置伺服并保持电机供电，不清除控制器故障。
+上述 `inference.cli` 命令用于 DP/ACT 推理；`gello_teleop.dual_gello_collect` 是遥操采集入口。
+DP/ACT 启动后加载模型并持续采集相机与关节状态，默认等待按 `s` 开始连续推理。
+按 `i` 停止当前推理、清空旧预测和历史，并低速返回所选臂的 `reset_q`；
+到位后继续等待 `s`。复位目标取自 `hardware_config` 引用的 GELLO 标定文件，
+速度、加速度、超时及到位确认复用硬件配置中的 `alignment.reset_*`。
+不带 `--enable-command` 时，`i` 仅暂停并清空缓存，不使能或移动机械臂。
+
+`c` 也可开始连续推理，`p` 只暂停并停止运动，`q` / Ctrl-C 停止并退出。
+使用 `--single-step` 时，`s` 执行一个完整 action chunk 后暂停，`c` 仍恢复连续运行。
+无人值守或没有交互键盘时可加 `--auto-start`，启动后直接开始推理。
+开始执行时从实际 q 初始化位置参考；退出时停止位置伺服并保持电机供电，不清除控制器故障。
 
 模型在独立 worker 中推理，相机持续采集，控制按 `execution.control_hz` 下发 q。
+开始推理后默认先做 `execution.warmup_steps: 1` 次预热，不使能机械臂、不执行预热输出；
+预热完成后清空模型历史，用新的对齐观测重新预测，避免首次 CUDA 初始化耗时使首个动作过期。
+设为 `0` 可关闭预热。预热和首个有效预测分别受 `startup_timeout_s` 限制；
+默认执行模式下，实际动作受 `maximum_prediction_age_s` 限制，不执行过期的动作。
+如果尚未开始执行，预热后的结果仍超过这个时效，会丢弃该结果、等待新的观测后重试，
+日志显示 `Discarding expired startup prediction`；重试不会重置启动超时。
+机械臂模式切换后等待首个可执行结果时也沿用此行为，保持实测 q。
+一旦开始执行，过期仍触发停止；未来时间戳、动作维度和关节范围异常也不会作为启动重试忽略。
+启用命令时先检查一份有效模型输出，再完成 xArm 使能与模式切换，保持实测 q；
+切换前的预测不执行。相机和关节状态都更新到切换之后，再重新预测并开始消费动作。
+这样模式切换耗时不会消耗首段执行动作的时效；日志会显示 `enable_ms`。
+状态日志中的 `status=warming_policy` / `inferencing`、`in_flight_ms` 和
+`observation_age_ms` 分别显示等待阶段、当前预测耗时及最近对齐观测的年龄；
+`prefetch_ms` 显示下一次预测相对于当前动作截止时间的提前量。
+过期报错会显示动作的 `age_ms`、`maximum_age_ms`、`infer_ms` 及 `prediction_status`；
+后者包含下一次预测是否在等待、等待时间、观测对齐原因、相机和关节状态的年龄。
 相机和机械臂状态按原始时间戳因果对齐；DP 的历史窗口按训练采样周期取帧，首次不足时重复最早帧。
-每个 action chunk 的所有 q 按训练 FPS 顺序消费，下一次预测在末尾预取；新预测不会覆盖尚未执行完的 chunk。
+相机映射时间戳若比主机时钟提前不超过 5 ms，会等待主机时间追上后再对齐，
+不会改写帧时间戳或提交未来观测；更大的提前量仍报错。
+action chunk 的 q 按训练 FPS 顺序消费；下一次预测根据 chunk 剩余时长、
+动作剩余有效时间及最近 8 次请求的最大耗时预取（不含预热）。
+提前量还包含 `execution.prediction_prefetch_margin_s`，公共默认值为 0.1 秒，
+`pi0_wm_xarm.yaml` 使用 0.15 秒，以容纳网络和推理耗时波动。
+例如请求耗时 283 ms、控制周期 10 ms 时，该 pi0 配置会提前约 443 ms 请求下一段。
+该参数只改变请求时机，不增加 `maximum_prediction_age_s`；提前返回的结果也会检查源观测年龄。
+通常在完整 chunk 结束后切换；
+如果尾部会超过观测时效，则在到期前切换到已经准备好的新预测。
+到期时仍没有有效新结果，会停止所有正在执行的臂。
 q 会经过现有的 `SecondOrderPositionFollower` 做速度、加速度、单次步长及跟踪误差限制。
 关节范围读取 GELLO 标定中指定的 URDF；可通过 `execution.joint_limits` 按左右臂显式覆盖。
 所需相机过期、状态过期、推理结果过期、模型异常或 SDK 发送异常会停止所有正在执行的臂。
+
+`pi0_wm_xarm.yaml` 已启用 `execution.open_loop: true`：允许慢推理返回结果后执行。
+每段从第一个动作开始，按训练频率依次执行 `consume_steps` 个动作；当前为 20 步、30 Hz，约 0.67 秒。
+执行完再用新观测请求下一段，等待期间保持最后一个 q 目标，相机和状态读取继续运行。
+开环模式不使用预测年龄截止时间或预取提前量；首段等待受 `startup_timeout_s` 限制，
+单次远程请求仍受 `pi0.request_timeout_s` 限制。
+动作形状、关节范围、速度/加速度限制、未来时间戳检查、相机和反馈时效检查及 `s/i/p/q` 保持有效。
+要恢复提前预测和动作过期停止，将 `execution.open_loop` 设为 `false`。
+
+该 pi0 配置同时启用 `execution.reset_on_start: true`。带 `--enable-command` 启动时，
+先按标定文件的 `reset_q` 和硬件配置的 `alignment.reset_*` 参数低速复位选中的臂；
+复位期间不请求模型，完成后默认等待 `s`，使用 `--auto-start` 则复位后自动推理。
+`q` 可中断复位；只读运行和 `--check` 不移动机械臂。
+`execution.quiet: true` 关闭配置大段打印、相机常规日志、SDK 版本/IP 横幅和每秒状态日志，保留操作提示及警告/错误。
+`execution.log_timing: true` 在预热、使能前检查和每段执行结束时打印耗时；
+`observe_ms` 是本地读取与对齐，`prepare_ms` 是输入准备，`connect_ms` 是连接和接口验证，
+`remote_ms` 是发送到收到响应（包含网络、服务端排队与处理），`server_ms` 是服务端返回的处理耗时，
+`postprocess_ms` 是输出验证/IK，`setup_ms` 是使能及伺服模式切换，
+`request_ms` 是本地完整模型请求，`execute_ms` 是动作段执行，
+`total_ms` 是本轮取样开始到动作段结束。所有数值单位为 ms，未返回的服务端耗时显示 `unknown`。
+`status=interrupted` 表示该段被暂停、退出或异常中断；复位单独打印 `reset_ms`。
 
 `active_arms` 沿用采集配置，也可在部署 YAML 或 `--active-arms right` 中覆盖。
 单臂模型必须输出 7 维；双臂模型必须输出 14 维，按 `active_arms` 列表顺序拆分。
@@ -71,11 +355,27 @@ q 会经过现有的 `SecondOrderPositionFollower` 做速度、加速度、单�
 仍需 `left_wrist`、`right_wrist` 两个视角。
 `observation.camera_map` 可将 checkpoint key 映射到不同的硬件相机名称。
 
-当前发现的 `../act/outputs/erase_board_eepose/policy_config.pkl` 设置了
-`quaternion_indices: [3,4,5,6]`，训练时将末四维按四元数归一化。
-这份权重不能用于七轴 q 执行，启动检查会报错。关节 ACT 应使用
-`--state_key observation.joint --action_key action.joint`，并省略 `--quaternion_indices`
-重新训练；只修改已保存的配置不能恢复被改变的训练目标。
+ACT 可在 `policy.brightness_jitter` 配置推理输入的随机亮度扰动，范围 `[0,1]`，
+`0` 关闭。当前 `act_xarm.yaml` 设置为 `0.2`：每次预测对左右相机同时使用一个
+`[0.8,1.2]` 内均匀随机的亮度倍率，在 ImageNet 归一化之前将 RGB 裁剪到 `[0,1]`。
+`policy.brightness_seed: 0` 固定随机序列，设为 `null` 则每次启动重新随机。
+扰动作用于模型输入；相机预览显示原始图像。修改配置后重启推理程序生效。
+
+关节 ACT 使用 `--state_key observation.joint --action_key action.joint --image_only`
+训练，从左右腕图像预测七轴绝对关节角，单位 rad；模型使用一个 action query。
+关节目标不设置 `--quaternion_indices`。启动脚本先核对原始 `action.joint`、
+样本标准差及归一化往返还原，再保存到 `../act/outputs/erase_board_joint`；
+已有 checkpoint 时会拒绝覆盖。脚本使用 ACT 的 `.venv-act` 环境，
+可通过 `ACT_PYTHON=/path/to/python` 指定其他训练环境。
+
+```bash
+# 只检查数据，不训练、不连接硬件。
+bash scripts/train_act_joint.sh --check
+# 训练关节目标；参数为 epoch 数。
+bash scripts/train_act_joint.sh 5000
+# 训练完成后检查默认关节权重，不连接硬件。
+python -m inference.cli --config inference/configs/act_xarm.yaml --active-arms right --check
+```
 
 ## 原有 Nero 推理流程
 
@@ -250,12 +550,12 @@ beta schedule、prediction type、模型权重和 normalizer 保持不变。DDIM
 
 ## H5 离线推理与 MuJoCo 播放
 
-在线 runtime 的键盘控制：`s` 请求并执行一个完整的有效推理/控制周期，执行后自动
-回到等待状态；再次按 `s` 执行下一周期，`c` 恢复连续运行，`i` 重置 episode，`q`
-退出。也可以用 `--single-step` 启动后直接处于等待状态：
+在线 runtime 默认等待 `s` 开始连续推理。使用 `--single-step` 时，`s` 请求并执行
+一个完整的有效推理/控制周期，然后回到等待状态；`c` 恢复连续运行，`i` 停止并复位，
+复位后继续等待 `s`，`q` 退出：
 
 ```bash
-uv run python -m inference.cli --config inference/configs/nero_contact_wm.yaml
+uv run python -m inference.cli --config inference/configs/nero_contact_wm.yaml --single-step
 ```
 
 单步请求会保留到下一张有效相机帧和 CAN 状态都可用，因此一次 `s` 不会因为传感器暂时
@@ -686,7 +986,9 @@ python scripts/nero_inference.py \
 
 运行期间按键：
 
-- `i`：结束当前 episode，复位并开始下一个 episode；
+- `s`：开始连续推理；添加 `--single-step` 时只执行一个控制周期；
+- `i`：结束当前 episode，清空旧预测和历史，复位到 `follower.rest_q`，等待 `s`；
+- `p`：暂停推理并保持当前关节位置；`c` 恢复连续推理；
 - `q` 或 `Ctrl-C`：结束当前 episode，复位到 `follower.rest_q`，保持 follower enabled，
   然后断开进程并退出；
 - `--duration` 到期执行与退出相同的最终复位流程。
@@ -698,3 +1000,98 @@ python scripts/nero_inference.py \
 
 不带 `--enable-command` 时保持只读语义，不会为了 episode 边界移动或复位机械臂。
 `--check` 永远不会连接机械臂。
+
+### pi0 + Contact WM（xArm）
+
+`inference/configs/pi0_wm_xarm.yaml` 使用 `pipeline: pi0_contact_wm`，保留
+pi0 的 50 步、25 Hz 绝对关节动作计划。Contact WM 使用
+`model/wm/peel_cucumber/contact_wm/checkpoints/step_00250000.pt`，从 50 步
+100 Hz 状态历史的时间戳向后取 8 个动作，经训练对应的 FK 转换为末端位姿，
+预测 32 步关节状态、力矩和接触概率。当前配置启用 WM，设置
+`pi0.open_loop: true`、`consume_steps: 50`：pi0 每段生成完整 50 个动作，
+按 25 Hz 固定推进 2 秒，已提交的动作不会被后续推理替换。
+WM 仍使用实时状态历史，控制器仍检查反馈和预测年龄。
+
+先在 openpi 环境运行 `python scripts/serve_pi0_wm.py --config inference/configs/pi0_wm_xarm.yaml`。
+在推理环境检查并启动：
+
+```bash
+python -m inference.cli --config inference/configs/pi0_wm_xarm.yaml --check
+python -m inference.cli --config inference/configs/pi0_wm_xarm.yaml --run --enable-command
+```
+
+`s` 开始，`p` 暂停，`i` 重置并暂停，`q` 退出。当前控制器为 `active`，
+需要 `--enable-command` 授权输出和复位；只读评估请设置
+`controller.execution: shadow`，并省略 `--enable-command`。
+WM 的 `delta_q` 使用 SDK 控制器参考值减实测关节角，
+需在实际部署中核对其与训练时 host `q_cmd` 的一致性。
+
+更新的单任务 Contact WM 位于 `model/wm/xarm_single_checkpoint/`。它训练时接收
+`link7` 的记录位姿 `action.ee_pose`，而当前 DP/pi0 只输出关节目标；
+`dp_contact_wm_xarm_single_shadow.yaml` 和 `pi0_wm_xarm_single_shadow.yaml`
+显式使用 `joint_fk_link7_approx` 将关节目标做 FK，再送入新权重。该近似在本地
+示教样本中与记录位姿存在毫米级偏差，必须先只读比较预测再考虑用于真机输出。
+可以用推理环境的 Python 执行无硬件检查：
+
+```bash
+/home/eid/miniforge3/envs/gello/bin/python -m inference.cli --config inference/configs/dp_contact_wm_xarm_single_shadow.yaml --check
+/home/eid/miniforge3/envs/gello/bin/python -m inference.cli --config inference/configs/pi0_wm_xarm_single_shadow.yaml --check
+```
+
+`model/wm/latent_wm_v2/` 的 checkpoint 声明 `latent_carswm_lstm_v2`，现已使用更新的
+`../PINN_LCP/model/pinn_model/latent_contact_world_model.py` 加载。v2 使用可学习的
+时间位置编码和依赖当前状态历史的条件解码；推理与 CUDA Graph 回放均传入这份历史，
+并把 DP 动作插值到状态历史 anchor 后的 25 Hz 网格。原有 v1 配置仍保留其时间编码
+和动作调度方式。DP 与原 π0 v2 配置使用只读 shadow；单独命名的
+`pi0_wm_v2_xarm.yaml` 当前设置为 active，启动前需核对输出配置。
+这些 v2 配置显式指定本地训练 URDF；`--check` 会比较训练和部署的 `link_eef` FK 链：
+
+```bash
+/home/eid/miniforge3/envs/gello/bin/python -m inference.cli --config inference/configs/dp_latent_wm_v2_xarm_shadow.yaml --check
+/home/eid/miniforge3/envs/gello/bin/python -m inference.cli --config inference/configs/pi0_latent_wm_v2_xarm_shadow.yaml --check
+/home/eid/miniforge3/envs/gello/bin/python -m inference.cli --config inference/configs/pi0_wm_v2_xarm.yaml --check
+```
+
+DP 的 active 与 shadow WM 配置设置 `policy.refresh_steps: 8` 和
+`wait_for_window_exhaustion: true`：以输入观测的
+时间戳为起点，8 个 25 Hz 动作占 320 ms，窗口结束后才提交下一次 DP 观测请求。
+WM 仍要求每次有 8 个未来动作，因此段末可能没有新的 WM 预测。控制器的
+`gap_hold` 在这段空档限时向最后一条已下发位置减速；超过 200 ms、关节跟踪
+误差超限或无法满足位置/速度/加速度/jerk 限制时，仍停止下发并由看门狗停机。
+启动前可用同名 shadow 配置检查预测和保持事件；该 320 ms 时序尚未经过真机验证。
+
+无硬件、无模型的完整分支检查（先将配置改为 `controller.execution: shadow`）：
+
+```bash
+python -m inference.cli --config inference/configs/pi0_wm_xarm.yaml --run --mock --auto-start --duration 2
+```
+
+WM 参考年龄从状态历史的 anchor 计算，包含推理耗时。此配置的 WM 更新周期为
+80 ms（12.5 Hz）；实机日志中 WM P95 约 57 ms，叠加最多 30 ms 的历史年龄及
+3 ms 调度余量，估计预算约 170 ms，因此 `maximum_forecast_age_ms` 设为
+180 ms，启动延迟估计设为 60 ms。`wm_reference_age_budget_ms` 显示当前估计预算，
+控制器日志的 `forecast_age_ms` 显示实际参考年龄。180 ms 是部署预算，不是预测
+精度验证；超过年龄上限或两步参考超出 320 ms 预测范围时仍会停止输出。
+
+`pi0.action_horizon` 必须与训练/服务端输出长度相同（当前模型为 50），不能通过
+把 YAML 改成 8 来缩短模型输出。开环接续模式要求 `consume_steps` 等于
+`action_horizon`。首段准备好后建立独立的动作执行时钟，后续段的起点固定为
+前段起点 + 2 秒；日志保留原始观测 `anchor_us`，另记 `execution_start_us`，
+不把旧观测伪装成新观测。预取提前量包含实测 pi0 P95、WM 的未来 8 动作窗口、
+一个动作周期的边界余量、30 ms 历史余量、调度余量及
+`pi0.prefetch_margin_ms`（默认 100 ms）。同时只保留当前段和一段待执行计划，
+WM 的八动作窗口可跨段插值；预取期间仍使用当前段，没有中途换计划。
+开环指段内动作固定，下一段仍使用预取时的相机观测；不做跨段动作融合或 RTC。
+接续保证时间连续，不能保证不同 pi0 段的关节值连续，现有公共限幅仍然生效。
+
+下一段缺失时不填充最后一个动作，也不外推；超过既有 WM 预测年龄或发送间隔
+限制时停止输出。超过预定接续起点才到达的段被拒绝，不移动边界或跳过动作。
+暂停、重置及重新启动清空已提交的段，并丢弃之前正在推理的结果。
+状态日志增加 `policy_open_loop`、`policy_chunk_ms`、`policy_prefetch_lead_ms`
+和 `buffered_policy_chunks`。设 `pi0.open_loop: false` 可使用原来的计划替换模式，
+此时 `consume_steps: 8` 约每 320 ms 请求一次，WM 保留完整 50 步未来窗口。
+
+当同一配置设置 `wm.enabled: false` 时，公共入口和 `scripts/run_pi0_wm.py`
+自动使用 pi0 直接执行分支，不加载 WM/WM 控制器。保持 `action_horizon: 50`，
+`consume_steps: 8` 表示按 25 Hz 执行前 8 步，再采集新观测请求下一段；等待
+推理时保持最后一个关节目标。`wm.enabled: true` 可切回联合推理分支。

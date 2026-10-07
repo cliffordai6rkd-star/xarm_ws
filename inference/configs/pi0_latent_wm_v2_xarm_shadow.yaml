@@ -1,0 +1,150 @@
+# wm.enabled=false: pi0 directly executes consume_steps joint actions per chunk.
+# wm.enabled=true: full pi0 plan -> FK -> latent WM v2, read-only shadow.
+pipeline: pi0_latent_wm
+# Server YAML must have the same pi0.interface, including state_semantic: zero.
+# Reuses native xArm SDK/IP/cameras/reset_q from hardware_config; no ZMQ bridge.
+# Keep the full 50-step 25 Hz plan; WM selects eight future actions by timestamp.
+policy:
+  type: pi0
+  client_source_path: ../../../openpi/packages/openpi-client/src
+pi0:
+  # true: load local weights lazily; false: connect to host:port.
+  # Local mode requires the openpi training environment and free GPU memory.
+  local: false  # gello connects to serve_pi0_wm.py running in the openpi environment.
+  local_source_path: ../../../openpi/src
+  local_checkpoint: /home/eid/openpi_checkpoints/pi0_xarm_lora_peel_cucumber/peel_cucumber_lora_v1/20000
+  # Relative to local_checkpoint; use the statistics saved with these weights.
+  local_norm_stats: assets/3cam_data/v3/peel_cucumber_25hz_3cam_lerobotv3/norm_stats.json
+  action_type: joint  # joint: execute q; eepose: convert xyz+quaternion through local IK
+  host: localhost
+  port: 8000
+  prompt: peel_cucumber  # Exact task text from the training dataset.
+  action_hz: 25
+  action_horizon: 50  # Trained output horizon; retain the complete plan for WM lookahead.
+  consume_steps: 50  # Commit the complete 2 s chunk at 25 Hz.
+  open_loop: true  # WM mode appends chunks; never replaces an unconsumed action.
+  prefetch_margin_ms: 100.0  # Extra lead beyond pi0 P95 + eight-action WM lookahead.
+  output_key: actions
+  # Allow the first request to compile JAX/cuDNN before steady-state inference.
+  request_timeout_s: 180.0
+  interface:
+    training_config: pi0_xarm_lora_peel_cucumber
+    state_key: observation/state
+    prompt_key: prompt
+    images:
+      front: observation/image
+      left_wrist: observation/wrist_image
+      right_wrist: observation/right_wrist_image
+    state_semantic: zero
+    action_semantic: action.joint
+    coordinate_frame: null
+    representation: joint_positions
+    image_format: uint8_hwc_rgb
+    output_space: physical_absolute
+    action_hz: 25
+    units: rad
+    joint_names:
+    - joint1
+    - joint2
+    - joint3
+    - joint4
+    - joint5
+    - joint6
+    - joint7
+wm:
+  enabled: true  # Open-loop pi0 stream -> live latent WM -> controller.
+  pinn_root: ../../../PINN_LCP
+  checkpoint: ../../model/wm/latent_wm_v2/nero_pretrain_xarm_sft/xarm_peel_cucumber/checkpoints/step_00050000.pt
+  model_version: latent_carswm_lstm_v2
+  urdf_path: ../../gello_teleop/models/xarm7_dynamics_g2.urdf
+  training_urdf_path: ../../gello_teleop/models/xarm7_dynamics.urdf  # Checkpoint path is stale on this host; verify the trained FK chain.
+  device: cuda:0
+  precision: bfloat16  # Match checkpoint training AMP.
+  cuda_graph: true
+  flow_steps: 16  # Match checkpoint rollout validation (32 Heun evaluations).
+  solver: heun
+  num_samples: 1
+  execute_steps: 4
+  initial_latency_ms: 60.0  # Initial estimate; live latent WM P95 updates the scheduler.
+  margin_ms: 3.0
+observation:
+  hardware_config: ../../gello_teleop/config/xarm7_gello_dual_dataset.yaml
+  arm: right
+  camera_map:
+    observation/image: front
+    observation/wrist_image: left_wrist
+    observation/right_wrist_image: right_wrist
+  visualize: true
+  maximum_age_ms: 150.0
+  maximum_camera_skew_ms: 60.0
+  maximum_pair_skew_ms: 10.0
+  # Last successful host send before feedback acquisition, matching collection.
+  command_source: host_command
+  command_file: /tmp/xarm_right_command.json
+execution:
+  reset_on_start: true
+  initial_q:
+    right: [0.0, 0.0, 0.0, 1.570796, 0.0, 1.570796, -1.570796]
+  warmup_steps: 2
+logging:
+  output_dir: ../../runs/pi0_latent_wm_v2_shadow
+  async_write: true
+  record_controller: true
+controller:
+  enabled: true
+  mode: mit_position # Fourth mode: host MIT torque -> dynamics -> delta q -> limited position.
+  execution: active
+  horizon_steps: 2
+  dt: 0.01  # physical step, separate from WM flow_steps and execute_steps
+  sample_id: 0
+  mit:
+    reference_source: wm_q
+    velocity_source: zero  # Track each timestamped WM position; damp measured velocity instead of differentiating noisy predictions.
+    feedforward_source: nominal_wm_blend  # Nominal support torque plus a bounded WM correction.
+    wm_tau_weight: 0.05  # After residual limiting, WM contributes at most 0.025 rad/s^2.
+    nominal_acceleration_source: zero  # Avoid integrating noisy second differences of WM positions.
+    wm_residual_acceleration_limit_rad_s2: 0.5
+    feedback_space: acceleration  # tau_feedback = M(q) @ (kp*position_error - kd*measured_velocity).
+    integration_base: previous_command  # Continuous sent-command trajectory; feedback remains measured.
+    kp: 8.0  # 1/s^2 in acceleration space; converted to torque by the full mass matrix.
+    kd: 6.0  # 1/s in acceleration space; initial outer position-tracking damping.
+  maximum_state_age_ms: 10.0
+  # Budget: 80 ms update period + 60 ms WM latency estimate (verify live P95) + <=30 ms history age + margin.
+  # Age is measured from the state-history anchor, including inference time.
+  maximum_forecast_age_ms: 180.0
+  maximum_compute_ms: 2.0  # measured budget; late results are invalid, not queued
+  # WM torque labels have a causal one-pole 15 Hz filter; reconstruct an
+  # equivalent interval torque reference before using instantaneous dynamics.
+  torque_reference: causal_inverse  # raw only for unfiltered torque references
+  tau_filter_cutoff_hz: 15.0  # Must match this checkpoint's causal torque filter.
+  dynamics:
+    gravity_m_s2: [0.0, 0.0, -9.81]
+    b_mode: zero  # explicit rigid-body baseline; no friction/contact compensation
+  weights:
+    # Experimental shadow scales, not calibrated real-machine controller gains.
+    eps_q: 0.01  # rad
+    eps_tau: 1.0  # Nm
+    rho: 1.0
+    sigma_model: 0.0  # Nm; no validated model error estimate yet
+    smooth_weight: 0.0
+    previous_weight: 0.0
+    eps_acceleration: 4.0  # rad/s^2, normalization for continuity penalties
+  # Local reference limits; do not change the shared teleoperation settings.
+  limits:
+    max_velocity_rad_s: 0.5
+    max_acceleration_rad_s2: 1.0
+    max_jerk_rad_s3: 5.0  # At 100 Hz, acceleration changes by at most 0.05 rad/s^2.
+    max_step_rad: 0.01
+    max_tracking_error_rad: 0.1
+visualization:
+  mujoco:
+    enabled: true
+    render_fps: 30
+    prediction_visualization_hz: 25
+    torque_base_length_m: 0.08  # First valid WM |tau| on each joint = one unit.
+    torque_gain: 1.0  # Common proportional multiplier for all seven bars.
+    torque_baseline_floor_nm: 0.1  # Zero/near-zero initial torque denominator.
+  camera_contact: true  # free / pre-contact / contact probabilities + 320 ms timeline.
+  tau_ext:
+    enabled: true
+    plot: true

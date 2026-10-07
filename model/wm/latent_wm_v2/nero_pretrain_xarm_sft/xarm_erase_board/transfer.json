@@ -1,0 +1,223 @@
+{
+  "checkpoint": "/mnt/code/lcx/PINN/outputs/latent_wm_v2/nero_pretrain_xarm_sft/shared/pretrained_for_sft.pt",
+  "snapshot": "ema",
+  "source_contract": {
+    "model_version": "latent_carswm_lstm_v2",
+    "schema": 2,
+    "codec": {
+      "schema": "latent_codec_v2",
+      "joint_dim": 7,
+      "latent_dim": 128,
+      "hidden_dim": 128,
+      "decoder_hidden_dim": 128,
+      "linear_layers": 2,
+      "classes": 3,
+      "input": [
+        "normalized_q_future_minus_q_current",
+        "normalized_tau",
+        "contact_one_hot",
+        "local_state"
+      ],
+      "activation": "silu",
+      "future_horizon": 32,
+      "normalization": {
+        "normalize_mode": "gaussian",
+        "normalize_lowdim_keys": [
+          "q",
+          "dq",
+          "delta_q",
+          "tau",
+          "action"
+        ],
+        "filters": {
+          "q": {
+            "enabled": true,
+            "source_already_filtered": false,
+            "operations": [
+              {
+                "type": "lowpass",
+                "cutoff_hz": 15.0,
+                "order": 1
+              }
+            ]
+          },
+          "dq": {
+            "enabled": true,
+            "source_already_filtered": false,
+            "operations": [
+              {
+                "type": "lowpass",
+                "cutoff_hz": 15.0,
+                "order": 1
+              }
+            ]
+          },
+          "delta_q": {
+            "enabled": true,
+            "source_already_filtered": false,
+            "operations": [
+              {
+                "type": "lowpass",
+                "cutoff_hz": 15.0,
+                "order": 1
+              }
+            ]
+          },
+          "tau": {
+            "enabled": true,
+            "source_already_filtered": false,
+            "operations": [
+              {
+                "type": "lowpass",
+                "cutoff_hz": 15.0,
+                "order": 1
+              }
+            ]
+          }
+        }
+      },
+      "snapshot_policy": "final_raw",
+      "stats_population": "training_split_future_windows_only",
+      "std_floor": 0.0001,
+      "local_state_dim": 64,
+      "local_input": [
+        "q",
+        "dq",
+        "delta_q",
+        "tau"
+      ],
+      "q_output": "normalized_q_current_plus_predicted_change",
+      "target_state_policy": "frozen_codec_snapshot",
+      "target_scale_policy": "codec_normalizer"
+    },
+    "motion_input_order": [
+      "q",
+      "dq",
+      "delta_q"
+    ],
+    "lstm_layers": 2,
+    "history_mode": "stateless_sliding_window",
+    "hidden_dim": 128,
+    "action_dim": 7,
+    "frozen_motion": false,
+    "history_horizon": 50,
+    "action_horizon": 8,
+    "stride": 1,
+    "action_start_offset": 1,
+    "grid": {
+      "schema": "relative_grid_v1",
+      "state_rate_hz": 100.0,
+      "action_rate_hz": 25.0,
+      "action_interval_tolerance_ns": 4000000,
+      "state_interval_tolerance_ns": 4000000,
+      "action_drift_tolerance_ns": 5000000,
+      "tick_ns": 10000000,
+      "action_ticks": 4,
+      "origin": "request_history_last_observation",
+      "rounding": "nearest_ties_away_from_zero_int64",
+      "fallback": "quantize_first_anchor_then_nominal_cadence",
+      "explicit": "per_token_grid_positions_minus_request_anchor_grid",
+      "state_stride": "retain_external_ticks",
+      "phase_clamping": false
+    },
+    "flow_layers": 4,
+    "attention_heads": 4,
+    "ffn_multiplier": 4,
+    "dropout": 0.01,
+    "solver": "heun",
+    "inference_steps": 16,
+    "action_contract": {
+      "semantic": "expert_policy_action_target",
+      "type": "absolute_ee_pose",
+      "coordinate_frame": "link7",
+      "representation": "xyz_quaternion",
+      "quaternion_order": "xyzw",
+      "quaternion_sign": "canonical_w_nonnegative",
+      "absolute_or_relative": "absolute"
+    },
+    "preprocessing": {
+      "filters": {
+        "q": {
+          "enabled": true,
+          "source_already_filtered": false,
+          "operations": [
+            {
+              "type": "lowpass",
+              "cutoff_hz": 15.0,
+              "order": 1
+            }
+          ]
+        },
+        "dq": {
+          "enabled": true,
+          "source_already_filtered": false,
+          "operations": [
+            {
+              "type": "lowpass",
+              "cutoff_hz": 15.0,
+              "order": 1
+            }
+          ]
+        },
+        "delta_q": {
+          "enabled": true,
+          "source_already_filtered": false,
+          "operations": [
+            {
+              "type": "lowpass",
+              "cutoff_hz": 15.0,
+              "order": 1
+            }
+          ]
+        },
+        "tau": {
+          "enabled": true,
+          "source_already_filtered": false,
+          "operations": [
+            {
+              "type": "lowpass",
+              "cutoff_hz": 15.0,
+              "order": 1
+            }
+          ]
+        }
+      },
+      "normalize_mode": "gaussian",
+      "normalize_lowdim_keys": [
+        "q",
+        "dq",
+        "delta_q",
+        "tau",
+        "action"
+      ],
+      "action_key": "action.ee_pose",
+      "high_keys": null,
+      "action_condition_mode": "direct",
+      "inference_delay_s": 0.0
+    },
+    "transfer": "pretrained_normalizer_and_contract_embedded_in_model_extra_state",
+    "flow_adapter_rank": 8,
+    "sft_flow_mode": "frozen",
+    "sft_train_motion_encoder": true,
+    "position_encoding": {
+      "scheme": "contact_wm_learned_index",
+      "history": "shared_learned_recency_index_newest_zero",
+      "action": "learned_sequence_index",
+      "future": "learned_sequence_index",
+      "history_length": 50,
+      "action_length": 8,
+      "future_length": 32
+    }
+  },
+  "source_transfer": null,
+  "target_action_contract": {
+    "semantic": "va_measured_joint_snapshot_fk",
+    "type": "absolute_ee_pose",
+    "coordinate_frame": "link_base",
+    "representation": "xyz_quaternion",
+    "quaternion_order": "xyzw",
+    "quaternion_sign": "canonical_w_nonnegative",
+    "absolute_or_relative": "absolute"
+  },
+  "flow_mode": "frozen"
+}

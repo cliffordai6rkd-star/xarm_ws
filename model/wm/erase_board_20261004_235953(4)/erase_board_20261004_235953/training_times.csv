@@ -1,0 +1,3 @@
+model,status,optimizer_steps,codec_steps,started_at,completed_at,measured_training_seconds,timing_complete
+contact_wm,complete,250000,0,2026-10-04T23:59:54+08:00,2026-10-05T03:06:21+08:00,11187.091,True
+latent_wm,complete,250000,10000,2026-10-05T00:06:19+08:00,2026-10-05T02:57:53+08:00,10293.595,True

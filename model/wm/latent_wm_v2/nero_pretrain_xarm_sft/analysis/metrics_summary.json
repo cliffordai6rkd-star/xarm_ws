@@ -1,0 +1,68 @@
+{
+  "nero_all": {
+    "status": "complete",
+    "final": {
+      "q_physical_rmse": 0.0327269492597759,
+      "tau_physical_rmse": 0.29287023795404465,
+      "contact_macro_f1": 0.5139371156692505,
+      "contact_1_f1": 0.732245683670044,
+      "contact_2_f1": 0.42985865473747253,
+      "latent_fm_loss": 0.10891350358724594,
+      "energy_score": 1.7569096088409424,
+      "tau_coverage_90": 0.8140535950660706
+    },
+    "best_logged_tau": {
+      "step": 250000,
+      "rmse": 0.29287023795404465
+    },
+    "best_logged_energy": {
+      "step": 250000,
+      "score": 1.7569096088409424
+    },
+    "sampled_validation_windows": 1750
+  },
+  "xarm_peel_cucumber": {
+    "status": "complete",
+    "final": {
+      "q_physical_rmse": 0.025395014731870575,
+      "tau_physical_rmse": 1.8206655790217943,
+      "contact_macro_f1": 0.678486704826355,
+      "contact_1_f1": 0.3018971383571625,
+      "contact_2_f1": 0.948525607585907,
+      "latent_fm_loss": 2.122056484222412,
+      "energy_score": 5.819989204406738,
+      "tau_coverage_90": 0.4235316812992096
+    },
+    "best_logged_tau": {
+      "step": 30000,
+      "rmse": 1.4331354973163608
+    },
+    "best_logged_energy": {
+      "step": 40000,
+      "score": 5.79305362701416
+    },
+    "sampled_validation_windows": 1024
+  },
+  "xarm_erase_board": {
+    "status": "complete",
+    "final": {
+      "q_physical_rmse": 0.033004002379418404,
+      "tau_physical_rmse": 1.2119225709971517,
+      "contact_macro_f1": 0.8093770742416382,
+      "contact_1_f1": 0.5485185980796814,
+      "contact_2_f1": 0.9717963933944702,
+      "latent_fm_loss": 1.7417408227920532,
+      "energy_score": 3.6706225872039795,
+      "tau_coverage_90": 0.5192610025405884
+    },
+    "best_logged_tau": {
+      "step": 40000,
+      "rmse": 1.1048373518639707
+    },
+    "best_logged_energy": {
+      "step": 48330,
+      "score": 3.6695661544799805
+    },
+    "sampled_validation_windows": 1024
+  }
+}

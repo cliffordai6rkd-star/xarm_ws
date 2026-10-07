@@ -389,10 +389,16 @@ class EpisodeBuffer:
             teleop_timestamp.attrs["clock"] = "unix_epoch"
             teleop_timestamp.attrs["unit"] = "us"
             feedback_metadata = self.episode_metadata.get('force_feedback', {})
-            urdf_feedback = feedback_metadata.get('source') == 'urdf'
             for name, output_name, arm_name, data in output_rows:
                 dataset = teleop.create_dataset(output_name, data=data, compression=_compression_for(data))
                 state_name = finalized_state_names.get(name, "")
+                side = arm_name or (self.arm_names[0] if self.arm_names else None)
+                settings = feedback_metadata.get('settings', {}).get(side, {})
+                feedback_source = feedback_metadata.get('sources', {}).get(
+                    side, settings.get('source', feedback_metadata.get('source')))
+                urdf_feedback = feedback_source == 'urdf'
+                dynamics_method = feedback_metadata.get('dynamics_methods', {}).get(
+                    side, settings.get('dynamics_method'))
                 dataset.attrs["state_name"] = state_name
                 # Collected signals are persisted exactly as received. Derived
                 # online inference outputs override these defaults below.
@@ -406,8 +412,12 @@ class EpisodeBuffer:
                     dataset.attrs['validity_path'] = 'teleop/tau_free_valid'
                     dataset.attrs['source_timestamp_path'] = 'teleop/tau_free_source_timestamp_us'
                     dataset.attrs['model_sample_timestamp_path'] = 'teleop/tau_free_sample_timestamp_us'
-                    dataset.attrs['source'] = ('asynchronous_urdf_inverse_dynamics' if urdf_feedback
-                                               else 'asynchronous_tau_free_sequence_model')
+                    dataset.attrs['source'] = (
+                        ('asynchronous_urdf_momentum_observer' if dynamics_method == 'momentum'
+                         else 'asynchronous_urdf_inverse_dynamics') if urdf_feedback
+                        else 'asynchronous_tau_free_sequence_model')
+                    if urdf_feedback and dynamics_method is not None:
+                        dataset.attrs['dynamics_method'] = dynamics_method
                 if name in {'tau_ext', 'tau_ext_raw'}:
                     dataset.attrs['definition'] = (
                         ('moving_mean(tau_feedback_measured - tau_urdf) over distinct valid robot samples'
@@ -419,8 +429,6 @@ class EpisodeBuffer:
                     if name == 'tau_ext':
                         dataset.attrs['measured_torque_path'] = 'teleop/tau_feedback_measured'
                         if urdf_feedback:
-                            side = arm_name or self.arm_names[0]
-                            settings = feedback_metadata.get('settings', {}).get(side, {})
                             dataset.attrs['moving_average_window'] = settings.get('tau_ext_mean_window', 1)
                             dataset.attrs['moving_average_requires_full_window'] = True
                             dataset.attrs['unaveraged_residual_path'] = 'teleop/tau_ext_cal'
@@ -436,13 +444,21 @@ class EpisodeBuffer:
                     dataset.attrs['joint_count'] = 7
                     dataset.attrs['invalid_value'] = 'NaN'
                     if urdf_feedback:
-                        side = arm_name or self.arm_names[0]
-                        settings = feedback_metadata.get('settings', {}).get(side, {})
                         dataset.attrs['moving_average_window'] = settings.get('tau_ext_mean_window', 1)
                         dataset.attrs['moving_average_requires_full_window'] = True
                 if urdf_feedback and name in {'tau_urdf', 'tau_free_pred', 'tau_ext_cal'}:
-                    dataset.attrs['definition'] = ('tau_feedback_measured - tau_urdf before moving mean'
-                                                   if name == 'tau_ext_cal' else 'RNEA(q, dq, filtered ddq) from URDF')
+                    if name == 'tau_ext_cal':
+                        definition = 'tau_feedback_measured - tau_urdf before moving mean'
+                    elif dynamics_method == 'momentum':
+                        definition = (
+                            'tau_feedback_measured - momentum_observer_residual before moving mean '
+                            '(reconstructed baseline; not instantaneous RNEA)')
+                    elif dynamics_method is not None:
+                        definition = feedback_metadata.get('urdf_prediction_definitions', {}).get(
+                            side, 'RNEA(configured q, dq, ddq) from URDF + configured friction torque')
+                    else:
+                        definition = 'RNEA(q, dq, filtered ddq) from URDF'
+                    dataset.attrs['definition'] = definition
                     if name == 'tau_free_pred':
                         dataset.attrs['compatibility_alias_of'] = 'teleop/tau_urdf'
                 if name in {'tau_free_valid', 'gello_feedback_valid'}:
@@ -585,7 +601,11 @@ class EpisodeBuffer:
                     group['timestamp_us'].attrs['unit'] = 'us'
                     config = next((c for c in self.config.cameras if c.name == camera_name), None)
                     if config is not None:
-                        group.attrs['fps'] = config.fps
+                        group.attrs['fps'] = config.effective_fps
+                        group.attrs['capture_fps'] = config.fps
+                    timestamps = self.camera_timestamps_us[camera_name]
+                    if len(timestamps) > 1 and timestamps[-1] > timestamps[0]:
+                        group.attrs['measured_fps'] = (len(timestamps) - 1) * 1e6 / (timestamps[-1] - timestamps[0])
                     group.attrs['frame_count'] = len(frames)
                     depth_frames = self.camera_depth_frames.get(camera_name, ())
                     if depth_frames:

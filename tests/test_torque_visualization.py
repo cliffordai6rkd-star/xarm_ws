@@ -465,12 +465,16 @@ def test_collector_starts_stops_plot_and_publishes_while_not_recording():
         pipeline.confirm_alignment()
         pipeline.takeover()
         deadline = time.monotonic()+1.
-        while not visualizer.publish.called and time.monotonic() < deadline:
+        while (not visualizer.publish.called or 'q_cmd' not in visualizer.publish.call_args.kwargs) and time.monotonic() < deadline:
             time.sleep(.01)
         assert visualizer.publish.called
         assert not pipeline.recording
         sides, states = visualizer.publish.call_args.args
         assert sides == ('left', 'right') and len(states) == 2
+        inputs = visualizer.publish.call_args.kwargs
+        assert inputs['q_cmd'].shape == (14,)
+        assert inputs['q_cmd_valid'].shape == (2,)
+        assert inputs['lowdim_timestamp_us'] >= max(state.timestamp_us for state in states)
     finally:
         pipeline.close()
     visualizer.close.assert_called_once()

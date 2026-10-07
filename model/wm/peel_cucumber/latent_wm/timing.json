@@ -1,0 +1,22 @@
+{
+  "model": "latent_wm",
+  "status": "trained",
+  "source_config": "/mnt/code/lcx/PINN/config/train_cfg/latent_cwm_xarm_peel_cucumber_100hz_40step.yaml",
+  "config_sha256": "b721a9d41c5849fd7862f16c8847efd85609ae99ba107d3cde854c523f61340a",
+  "optimizer_steps": 250000,
+  "codec_steps": 10000,
+  "training_validation_ode_steps": 16,
+  "training_attempts": [
+    {
+      "started_at": "2026-10-05T10:37:11+08:00",
+      "pid": 2942269,
+      "status": "complete",
+      "ended_at": "2026-10-05T13:37:02+08:00",
+      "seconds": 10790.98130030898,
+      "optimizer_steps": 250000,
+      "codec_steps": 10000
+    }
+  ],
+  "evaluations": [],
+  "training_completed_at": "2026-10-05T13:37:02+08:00"
+}

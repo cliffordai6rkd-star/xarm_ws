@@ -1,0 +1,1746 @@
+{
+  "checkpoint": "/mnt/code/lcx/PINN/outputs/tau_free_sequence/xarm_offline_teacher/model.pt",
+  "checkpoint_sha256": "d71489f15c391da3f669d34130e9d55c4dd030c9aab737ebe3973acab854bb61",
+  "pipeline_sha256": "828ec4d56c4864f1c973a053c1d16dfa7f3447ef5445a91a5776806721967198",
+  "cache_dir": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels",
+  "teacher_inputs": [
+    "q",
+    "dq",
+    "delta_q"
+  ],
+  "filter": "defined by exported checkpoint spec/contract",
+  "episodes": [
+    {
+      "source_index": 0,
+      "episode_index": 0,
+      "start": 0,
+      "end": 1890,
+      "valid_rows": 1689,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "910da7134180365ed95b5077a01ce813ed0650b979c2adc6adf5f155cf2cc0a8",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/910da7134180365ed95b5077a01ce813ed0650b979c2adc6adf5f155cf2cc0a8.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 924,
+        "1": 100,
+        "2": 665
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 1,
+      "start": 1890,
+      "end": 3970,
+      "valid_rows": 1878,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "948ce7215d24e360e78fc026720a6cfd5416239640e175bd7c474215c5febc5c",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/948ce7215d24e360e78fc026720a6cfd5416239640e175bd7c474215c5febc5c.npz",
+      "phase_counts": {
+        "-1": 202,
+        "0": 1180,
+        "1": 100,
+        "2": 598
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 2,
+      "start": 3970,
+      "end": 5992,
+      "valid_rows": 1820,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "a37fb12e68c4a8da03fa0d51019fe5a5c26cca4ce3d046003806583d09e1b81d",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/a37fb12e68c4a8da03fa0d51019fe5a5c26cca4ce3d046003806583d09e1b81d.npz",
+      "phase_counts": {
+        "-1": 202,
+        "0": 1068,
+        "1": 199,
+        "2": 553
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 3,
+      "start": 5992,
+      "end": 7849,
+      "valid_rows": 1656,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "040664b211daa48edf97e8b4577eb085165dd0ace6d718559f8e3dc710a75d65",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/040664b211daa48edf97e8b4577eb085165dd0ace6d718559f8e3dc710a75d65.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 885,
+        "1": 116,
+        "2": 655
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 4,
+      "start": 7849,
+      "end": 9584,
+      "valid_rows": 1533,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "fd30c1336f846d106760d91c9ee6afc4010c0b33332f5ae97ff5068ae171c498",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/fd30c1336f846d106760d91c9ee6afc4010c0b33332f5ae97ff5068ae171c498.npz",
+      "phase_counts": {
+        "-1": 202,
+        "0": 830,
+        "1": 102,
+        "2": 601
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 5,
+      "start": 9584,
+      "end": 11257,
+      "valid_rows": 1472,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "d23d7d22367340eec8a31f4208d0c9be7be013e987b4441d306cbffca5e40113",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/d23d7d22367340eec8a31f4208d0c9be7be013e987b4441d306cbffca5e40113.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 792,
+        "1": 99,
+        "2": 581
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 6,
+      "start": 11257,
+      "end": 13148,
+      "valid_rows": 1690,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "de5e076c6b9e6d1cba71f4ef09237d1633ec67430a2cf9b46b60e7ff49e71008",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/de5e076c6b9e6d1cba71f4ef09237d1633ec67430a2cf9b46b60e7ff49e71008.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 907,
+        "1": 100,
+        "2": 683
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 7,
+      "start": 13148,
+      "end": 14916,
+      "valid_rows": 1567,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "57e544880006161e22f3390e2ec202f9222403553cefea84c7f42af93d2c1f1c",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/57e544880006161e22f3390e2ec202f9222403553cefea84c7f42af93d2c1f1c.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 785,
+        "1": 122,
+        "2": 660
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 8,
+      "start": 14916,
+      "end": 16748,
+      "valid_rows": 1631,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "bec39418ff165581a3d184e8483996bac24d19829504bb419bf9ec68132dee3c",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/bec39418ff165581a3d184e8483996bac24d19829504bb419bf9ec68132dee3c.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 839,
+        "1": 100,
+        "2": 692
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 9,
+      "start": 16748,
+      "end": 18635,
+      "valid_rows": 1687,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "f4bb782acb56ccacfb34d07cdad3ca5323b7d916deffeffb1b33fbc5eb2a46a5",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/f4bb782acb56ccacfb34d07cdad3ca5323b7d916deffeffb1b33fbc5eb2a46a5.npz",
+      "phase_counts": {
+        "-1": 200,
+        "0": 944,
+        "1": 151,
+        "2": 592
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 10,
+      "start": 18635,
+      "end": 20489,
+      "valid_rows": 1653,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "86cb8dfa9ef298fbe7404d1cada61f82257dc26818662e58b91c5056cb26829e",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/86cb8dfa9ef298fbe7404d1cada61f82257dc26818662e58b91c5056cb26829e.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 944,
+        "1": 113,
+        "2": 596
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 11,
+      "start": 20489,
+      "end": 22471,
+      "valid_rows": 1782,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "3bf6ae83081750ce4f92bb31028e1510654af32f16a097dda1a646c8d0877fce",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/3bf6ae83081750ce4f92bb31028e1510654af32f16a097dda1a646c8d0877fce.npz",
+      "phase_counts": {
+        "-1": 200,
+        "0": 945,
+        "1": 196,
+        "2": 641
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 12,
+      "start": 22471,
+      "end": 24338,
+      "valid_rows": 1666,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "6e90f96dcb02511ba877719e332612ab920499b21cb6e443ae7a4c8c4dc89d8e",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/6e90f96dcb02511ba877719e332612ab920499b21cb6e443ae7a4c8c4dc89d8e.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 877,
+        "1": 102,
+        "2": 687
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 13,
+      "start": 24338,
+      "end": 26431,
+      "valid_rows": 1891,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "1156d9b15eb38cebd98cecdc9dee9cdfab3160b51e27f078b93c3b50edabb7c7",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/1156d9b15eb38cebd98cecdc9dee9cdfab3160b51e27f078b93c3b50edabb7c7.npz",
+      "phase_counts": {
+        "-1": 202,
+        "0": 847,
+        "1": 235,
+        "2": 809
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 14,
+      "start": 26431,
+      "end": 28117,
+      "valid_rows": 1484,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "ba85d27cc339890479ca4dcec7f0e5699dc6ff195dff218b92433458d1ea6f51",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/ba85d27cc339890479ca4dcec7f0e5699dc6ff195dff218b92433458d1ea6f51.npz",
+      "phase_counts": {
+        "-1": 202,
+        "0": 903,
+        "1": 100,
+        "2": 481
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 15,
+      "start": 28117,
+      "end": 29925,
+      "valid_rows": 1607,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "d6cae450ca622b853d6765bdd4aa8366c19c32c384330eea155b5b76301897f6",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/d6cae450ca622b853d6765bdd4aa8366c19c32c384330eea155b5b76301897f6.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 876,
+        "1": 99,
+        "2": 632
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 16,
+      "start": 29925,
+      "end": 31349,
+      "valid_rows": 1224,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "7c4f79f8bf451f6fd660f0841e2a7522d63716f36d011342b00f917868af4a6f",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/7c4f79f8bf451f6fd660f0841e2a7522d63716f36d011342b00f917868af4a6f.npz",
+      "phase_counts": {
+        "-1": 200,
+        "0": 529,
+        "1": 108,
+        "2": 587
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 17,
+      "start": 31349,
+      "end": 33111,
+      "valid_rows": 1561,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "3cb1529f86167a3a4213bef4091eb1a74de5ac551103900d51e63e53ba2a7d3b",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/3cb1529f86167a3a4213bef4091eb1a74de5ac551103900d51e63e53ba2a7d3b.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 759,
+        "1": 99,
+        "2": 703
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 18,
+      "start": 33111,
+      "end": 35040,
+      "valid_rows": 1729,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "434bf62528762f846468a27547898145ab0c06878c345d6ac1944de09c34a3fa",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/434bf62528762f846468a27547898145ab0c06878c345d6ac1944de09c34a3fa.npz",
+      "phase_counts": {
+        "-1": 200,
+        "0": 996,
+        "1": 99,
+        "2": 634
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 19,
+      "start": 35040,
+      "end": 36751,
+      "valid_rows": 1509,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "a9aef06d17f624aa4b0c9f4f844893c171c10fa8996c4aa58339d56d40c2ff7e",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/a9aef06d17f624aa4b0c9f4f844893c171c10fa8996c4aa58339d56d40c2ff7e.npz",
+      "phase_counts": {
+        "-1": 202,
+        "0": 825,
+        "1": 99,
+        "2": 585
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 20,
+      "start": 36751,
+      "end": 38530,
+      "valid_rows": 1578,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "63bd1d93b13eec1739d76f0b7f56e39eca01e15dabebb565e52dc4a6661f751a",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/63bd1d93b13eec1739d76f0b7f56e39eca01e15dabebb565e52dc4a6661f751a.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 802,
+        "1": 146,
+        "2": 630
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 21,
+      "start": 38530,
+      "end": 40342,
+      "valid_rows": 1612,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "c4148c75f173b93a8d416b51ae5dc90713918d1ff306c8ba6d0e9519936d6ca2",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/c4148c75f173b93a8d416b51ae5dc90713918d1ff306c8ba6d0e9519936d6ca2.npz",
+      "phase_counts": {
+        "-1": 200,
+        "0": 671,
+        "1": 309,
+        "2": 632
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 22,
+      "start": 40342,
+      "end": 42016,
+      "valid_rows": 1473,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "8a036b12d471ac47a69a7e7e0d4bc3d1f88e04e59409e54a499375f35a761a72",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/8a036b12d471ac47a69a7e7e0d4bc3d1f88e04e59409e54a499375f35a761a72.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 807,
+        "1": 99,
+        "2": 567
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 23,
+      "start": 42016,
+      "end": 43668,
+      "valid_rows": 1451,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "a6d4f8b890b1bb0ada67397881e0fbbd13ae9866f803dc8530ba4805ddebf134",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/a6d4f8b890b1bb0ada67397881e0fbbd13ae9866f803dc8530ba4805ddebf134.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 657,
+        "1": 99,
+        "2": 695
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 24,
+      "start": 43668,
+      "end": 45523,
+      "valid_rows": 1654,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "40f831cf24aaafce645e0266c4aaa4e4cff7d67da1cd3a95c92ffaade7bd4a69",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/40f831cf24aaafce645e0266c4aaa4e4cff7d67da1cd3a95c92ffaade7bd4a69.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 913,
+        "1": 129,
+        "2": 612
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 25,
+      "start": 45523,
+      "end": 47304,
+      "valid_rows": 1580,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "dab883c007a4d65152a722005b60cc7e8b8c897f6afe2356e4d47a4126da038d",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/dab883c007a4d65152a722005b60cc7e8b8c897f6afe2356e4d47a4126da038d.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 822,
+        "1": 190,
+        "2": 568
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 26,
+      "start": 47304,
+      "end": 49009,
+      "valid_rows": 1504,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "1e7ac644b0c9b6389e9efced9c20a5153d809eb1c478f1c9b4ee19e797516928",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/1e7ac644b0c9b6389e9efced9c20a5153d809eb1c478f1c9b4ee19e797516928.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 798,
+        "1": 100,
+        "2": 606
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 27,
+      "start": 49009,
+      "end": 50720,
+      "valid_rows": 1509,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "8825d4dded47f7b971c0c7747b5be7946e75b0605e50efd8e31317d3258cd164",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/8825d4dded47f7b971c0c7747b5be7946e75b0605e50efd8e31317d3258cd164.npz",
+      "phase_counts": {
+        "-1": 202,
+        "0": 761,
+        "1": 99,
+        "2": 649
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 28,
+      "start": 50720,
+      "end": 52398,
+      "valid_rows": 1476,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "45fcbf829bea260f76469d03d25fd396a1b0a53caa64ecf0fc5ec0e6a67b7c19",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/45fcbf829bea260f76469d03d25fd396a1b0a53caa64ecf0fc5ec0e6a67b7c19.npz",
+      "phase_counts": {
+        "-1": 202,
+        "0": 753,
+        "1": 99,
+        "2": 624
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 29,
+      "start": 52398,
+      "end": 54099,
+      "valid_rows": 1499,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "0496e632a6d498665f76d00da527210d2a6eb690c8ff08ec5bdbc6dcff4c9251",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/0496e632a6d498665f76d00da527210d2a6eb690c8ff08ec5bdbc6dcff4c9251.npz",
+      "phase_counts": {
+        "-1": 202,
+        "0": 715,
+        "1": 109,
+        "2": 675
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 30,
+      "start": 54099,
+      "end": 55888,
+      "valid_rows": 1588,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "c0f88422c3f6646002438bbbe766baf7ee776fd3e749de83d513a7fa1c22a765",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/c0f88422c3f6646002438bbbe766baf7ee776fd3e749de83d513a7fa1c22a765.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 732,
+        "1": 99,
+        "2": 757
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 31,
+      "start": 55888,
+      "end": 57656,
+      "valid_rows": 1567,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "caf61fc8733db553afb1c0a5e1ff50819f02d5b69e8934739df5582dc04b3b33",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/caf61fc8733db553afb1c0a5e1ff50819f02d5b69e8934739df5582dc04b3b33.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 714,
+        "1": 100,
+        "2": 753
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 32,
+      "start": 57656,
+      "end": 59321,
+      "valid_rows": 1464,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "66e3b44d8d9d8bd6574de8ff709258534a856055196515ff411a3ba8ce444527",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/66e3b44d8d9d8bd6574de8ff709258534a856055196515ff411a3ba8ce444527.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 720,
+        "1": 100,
+        "2": 644
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 33,
+      "start": 59321,
+      "end": 61073,
+      "valid_rows": 1551,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "aec7768b39fab2c09aade4fdf78a41809c9f80b4e8bdee66aeaf043cc5c7bb34",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/aec7768b39fab2c09aade4fdf78a41809c9f80b4e8bdee66aeaf043cc5c7bb34.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 772,
+        "1": 100,
+        "2": 679
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 34,
+      "start": 61073,
+      "end": 62642,
+      "valid_rows": 1369,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "8da1a1fd8d5eb9fd66da69fe7bd89056318e622dcbf3e62a4474535cc416a7e4",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/8da1a1fd8d5eb9fd66da69fe7bd89056318e622dcbf3e62a4474535cc416a7e4.npz",
+      "phase_counts": {
+        "-1": 200,
+        "0": 637,
+        "1": 99,
+        "2": 633
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 35,
+      "start": 62642,
+      "end": 64281,
+      "valid_rows": 1439,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "ceb63e056d2113ee1508a71eed14667df3231937806fc5c1bc52cb71d1998282",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/ceb63e056d2113ee1508a71eed14667df3231937806fc5c1bc52cb71d1998282.npz",
+      "phase_counts": {
+        "-1": 200,
+        "0": 747,
+        "1": 99,
+        "2": 593
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 36,
+      "start": 64281,
+      "end": 65950,
+      "valid_rows": 1469,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "15fefff24aa3c464a6cfd372e6affab1b4a78eefebbe324e23cd072194a89f28",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/15fefff24aa3c464a6cfd372e6affab1b4a78eefebbe324e23cd072194a89f28.npz",
+      "phase_counts": {
+        "-1": 200,
+        "0": 710,
+        "1": 100,
+        "2": 659
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 37,
+      "start": 65950,
+      "end": 67605,
+      "valid_rows": 1454,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "129c574565cd22deb4bb53ef049fffef99caa7319233278b3634577316ed9709",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/129c574565cd22deb4bb53ef049fffef99caa7319233278b3634577316ed9709.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 704,
+        "1": 99,
+        "2": 651
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 38,
+      "start": 67605,
+      "end": 69337,
+      "valid_rows": 1532,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "8df5ac376a0b97721f6485fc2144714ddca8d96ddf61c3facb7aff819012bdfc",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/8df5ac376a0b97721f6485fc2144714ddca8d96ddf61c3facb7aff819012bdfc.npz",
+      "phase_counts": {
+        "-1": 200,
+        "0": 721,
+        "1": 99,
+        "2": 712
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 39,
+      "start": 69337,
+      "end": 70975,
+      "valid_rows": 1437,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "ce743996e3a223d5810f55d8ba8b4c1dae9c95866a29c25d1f864fdcafa02462",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/ce743996e3a223d5810f55d8ba8b4c1dae9c95866a29c25d1f864fdcafa02462.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 646,
+        "1": 100,
+        "2": 691
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 40,
+      "start": 70975,
+      "end": 72844,
+      "valid_rows": 1668,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "cbe3d7432698e32fc1bd9eca0f2d3ba3beb867df0c2fea8b53cbc2c4fde0e090",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/cbe3d7432698e32fc1bd9eca0f2d3ba3beb867df0c2fea8b53cbc2c4fde0e090.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 660,
+        "1": 199,
+        "2": 809
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 41,
+      "start": 72844,
+      "end": 74425,
+      "valid_rows": 1379,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "39e914714b7f734cb4df260f4c4a870f067b1c6cfca18b944228c848ab8feb67",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/39e914714b7f734cb4df260f4c4a870f067b1c6cfca18b944228c848ab8feb67.npz",
+      "phase_counts": {
+        "-1": 202,
+        "0": 504,
+        "1": 183,
+        "2": 692
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 42,
+      "start": 74425,
+      "end": 76091,
+      "valid_rows": 1465,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "ad40c2e1cb9b5d6d17a337639fb3c394fbc7ba03319b30017fa32f4e4b363419",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/ad40c2e1cb9b5d6d17a337639fb3c394fbc7ba03319b30017fa32f4e4b363419.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 591,
+        "1": 99,
+        "2": 775
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 43,
+      "start": 76091,
+      "end": 77752,
+      "valid_rows": 1460,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "76a1c39b1f7d973fa480920fd1a49f0dbfb958ec0beeb7520b90fab812306128",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/76a1c39b1f7d973fa480920fd1a49f0dbfb958ec0beeb7520b90fab812306128.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 743,
+        "1": 99,
+        "2": 618
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 44,
+      "start": 77752,
+      "end": 79313,
+      "valid_rows": 1361,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "58a7fc1b63a4d557be4dbcbbf6a24edbf55aa36ab4efde8354685a3a7f670287",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/58a7fc1b63a4d557be4dbcbbf6a24edbf55aa36ab4efde8354685a3a7f670287.npz",
+      "phase_counts": {
+        "-1": 200,
+        "0": 659,
+        "1": 99,
+        "2": 603
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 45,
+      "start": 79313,
+      "end": 80930,
+      "valid_rows": 1417,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "e52840a80c4a28ee71e242bcd11fe263e0f7c0eb1c46e402d818e8dcd16539fd",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/e52840a80c4a28ee71e242bcd11fe263e0f7c0eb1c46e402d818e8dcd16539fd.npz",
+      "phase_counts": {
+        "-1": 200,
+        "0": 586,
+        "1": 100,
+        "2": 731
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 46,
+      "start": 80930,
+      "end": 82754,
+      "valid_rows": 1623,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "f7b0a075097df973ad5d31def092185f71bd17167bdb656e6c0d150453e0f814",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/f7b0a075097df973ad5d31def092185f71bd17167bdb656e6c0d150453e0f814.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 802,
+        "1": 100,
+        "2": 721
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 47,
+      "start": 82754,
+      "end": 84443,
+      "valid_rows": 1487,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "8e1e78c9294d911b2c61098b20c764dc250bc348a599eb498d82a213c118a23e",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/8e1e78c9294d911b2c61098b20c764dc250bc348a599eb498d82a213c118a23e.npz",
+      "phase_counts": {
+        "-1": 202,
+        "0": 843,
+        "1": 100,
+        "2": 544
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 48,
+      "start": 84443,
+      "end": 86216,
+      "valid_rows": 1572,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "c7e03472ae17973a106af028e9cdc7cee91a62976087f23f55dac0c6a308b9f2",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/c7e03472ae17973a106af028e9cdc7cee91a62976087f23f55dac0c6a308b9f2.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 770,
+        "1": 100,
+        "2": 702
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 49,
+      "start": 86216,
+      "end": 87961,
+      "valid_rows": 1543,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "5f0a5f98ac16d966760d0c7e65bc5f18d442d4bf1a4d86f49e5ce53dafcd4fea",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/5f0a5f98ac16d966760d0c7e65bc5f18d442d4bf1a4d86f49e5ce53dafcd4fea.npz",
+      "phase_counts": {
+        "-1": 202,
+        "0": 563,
+        "1": 187,
+        "2": 793
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 50,
+      "start": 87961,
+      "end": 89577,
+      "valid_rows": 1415,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "7786627e0023fef931f06ec9df2cc6116d08185597d9576f0708a9ed5d3d88ca",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/7786627e0023fef931f06ec9df2cc6116d08185597d9576f0708a9ed5d3d88ca.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 614,
+        "1": 104,
+        "2": 697
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 51,
+      "start": 89577,
+      "end": 91297,
+      "valid_rows": 1518,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "35e8d384d86e5de6d49be464db2cacba5ae55c48dabcdd9c76a2dcba57399a64",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/35e8d384d86e5de6d49be464db2cacba5ae55c48dabcdd9c76a2dcba57399a64.npz",
+      "phase_counts": {
+        "-1": 202,
+        "0": 739,
+        "1": 201,
+        "2": 578
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 52,
+      "start": 91297,
+      "end": 93037,
+      "valid_rows": 1540,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "63ebbfbdcd79e8868a31c1815a2a44ec82191c3b93659ccedf208b22aff0553e",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/63ebbfbdcd79e8868a31c1815a2a44ec82191c3b93659ccedf208b22aff0553e.npz",
+      "phase_counts": {
+        "-1": 200,
+        "0": 838,
+        "1": 100,
+        "2": 602
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 53,
+      "start": 93037,
+      "end": 94784,
+      "valid_rows": 1546,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "eb3fcd97dffdabcacc59288b36cf5470e964ace9343b22f2954ef78d9a30cdfa",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/eb3fcd97dffdabcacc59288b36cf5470e964ace9343b22f2954ef78d9a30cdfa.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 664,
+        "1": 203,
+        "2": 679
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 54,
+      "start": 94784,
+      "end": 96562,
+      "valid_rows": 1576,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "1ae4d99761d456e7c34a5b40206ac670abe4a90fd8a04aba77ab1bbbdf798d42",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/1ae4d99761d456e7c34a5b40206ac670abe4a90fd8a04aba77ab1bbbdf798d42.npz",
+      "phase_counts": {
+        "-1": 202,
+        "0": 764,
+        "1": 114,
+        "2": 698
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 55,
+      "start": 96562,
+      "end": 98359,
+      "valid_rows": 1596,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "0c4ad6cc224780888243f414680181539be20b9e048cbfd2647d527db9a246e5",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/0c4ad6cc224780888243f414680181539be20b9e048cbfd2647d527db9a246e5.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 686,
+        "1": 190,
+        "2": 720
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 56,
+      "start": 98359,
+      "end": 100130,
+      "valid_rows": 1571,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "dd71bbde0d74461a05dab732c70f945c23b40832b475c4c76f63207b821348dc",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/dd71bbde0d74461a05dab732c70f945c23b40832b475c4c76f63207b821348dc.npz",
+      "phase_counts": {
+        "-1": 200,
+        "0": 728,
+        "1": 150,
+        "2": 693
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 57,
+      "start": 100130,
+      "end": 102051,
+      "valid_rows": 1720,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "e15085e1bbe8ece14f028e11a4a9693c446b606e1f14ce5a7f5a0bf968e3a612",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/e15085e1bbe8ece14f028e11a4a9693c446b606e1f14ce5a7f5a0bf968e3a612.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 784,
+        "1": 172,
+        "2": 764
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 58,
+      "start": 102051,
+      "end": 103669,
+      "valid_rows": 1416,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "1a7c83c356531023fedf549bca6678b741ba1e2028495ffb50827fcd6f29d736",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/1a7c83c356531023fedf549bca6678b741ba1e2028495ffb50827fcd6f29d736.npz",
+      "phase_counts": {
+        "-1": 202,
+        "0": 634,
+        "1": 99,
+        "2": 683
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 59,
+      "start": 103669,
+      "end": 105379,
+      "valid_rows": 1508,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "1653e689998f7096cc9db7165963187e9ec8ba421217d6a739ab43a822ab4911",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/1653e689998f7096cc9db7165963187e9ec8ba421217d6a739ab43a822ab4911.npz",
+      "phase_counts": {
+        "-1": 202,
+        "0": 694,
+        "1": 99,
+        "2": 715
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 60,
+      "start": 105379,
+      "end": 106773,
+      "valid_rows": 1192,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "6ee8c60840e2a3404ac45011bba1d8f371bc32803e0c85e977af24a8cfba8f08",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/6ee8c60840e2a3404ac45011bba1d8f371bc32803e0c85e977af24a8cfba8f08.npz",
+      "phase_counts": {
+        "-1": 202,
+        "0": 450,
+        "1": 99,
+        "2": 643
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 61,
+      "start": 106773,
+      "end": 108283,
+      "valid_rows": 1309,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "3a6304a89aa8e8ed4769bd94291e03fa4544b352c6c900165bcc920a632e1e7b",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/3a6304a89aa8e8ed4769bd94291e03fa4544b352c6c900165bcc920a632e1e7b.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 603,
+        "1": 143,
+        "2": 563
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 62,
+      "start": 108283,
+      "end": 110097,
+      "valid_rows": 1612,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "4343362c6027d2a9aeda845b8b17977dc9af27fcf2fbbf3c1379444f8b1951dc",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/4343362c6027d2a9aeda845b8b17977dc9af27fcf2fbbf3c1379444f8b1951dc.npz",
+      "phase_counts": {
+        "-1": 202,
+        "0": 691,
+        "1": 108,
+        "2": 813
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 63,
+      "start": 110097,
+      "end": 111781,
+      "valid_rows": 1484,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "033744eb3ff871a22a1c9867f6bec5c935afac2bdbd34fbdcd3b81effcf97f3e",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/033744eb3ff871a22a1c9867f6bec5c935afac2bdbd34fbdcd3b81effcf97f3e.npz",
+      "phase_counts": {
+        "-1": 200,
+        "0": 600,
+        "1": 109,
+        "2": 775
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 64,
+      "start": 111781,
+      "end": 113449,
+      "valid_rows": 1468,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "77e52ce5b78c78ef5f54124cb6c1d6c9e61746ff38b77f7f8a3e3418d581cf91",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/77e52ce5b78c78ef5f54124cb6c1d6c9e61746ff38b77f7f8a3e3418d581cf91.npz",
+      "phase_counts": {
+        "-1": 200,
+        "0": 581,
+        "1": 99,
+        "2": 788
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 65,
+      "start": 113449,
+      "end": 114984,
+      "valid_rows": 1333,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "28d41a400854622de04e7054c56f831597f58696065b36b08e09b31e2b5ba1b7",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/28d41a400854622de04e7054c56f831597f58696065b36b08e09b31e2b5ba1b7.npz",
+      "phase_counts": {
+        "-1": 202,
+        "0": 601,
+        "1": 100,
+        "2": 632
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 66,
+      "start": 114984,
+      "end": 116504,
+      "valid_rows": 1319,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "60a08897ac3cd3b3b320ebdec6f08096e4ef5c2be3c6db3e0dfc02db58ba1e5f",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/60a08897ac3cd3b3b320ebdec6f08096e4ef5c2be3c6db3e0dfc02db58ba1e5f.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 591,
+        "1": 100,
+        "2": 628
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 67,
+      "start": 116504,
+      "end": 118160,
+      "valid_rows": 1454,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "66ebbf5793463985b71f409d5e0aebf021b155fe9e78e80403ac1766fa3699fa",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/66ebbf5793463985b71f409d5e0aebf021b155fe9e78e80403ac1766fa3699fa.npz",
+      "phase_counts": {
+        "-1": 202,
+        "0": 624,
+        "1": 111,
+        "2": 719
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 68,
+      "start": 118160,
+      "end": 119618,
+      "valid_rows": 1256,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "a1c84451de78cca1bb841898e6bb0a3c9870cf407463655ed93d539de954d79d",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/a1c84451de78cca1bb841898e6bb0a3c9870cf407463655ed93d539de954d79d.npz",
+      "phase_counts": {
+        "-1": 202,
+        "0": 558,
+        "1": 110,
+        "2": 588
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 69,
+      "start": 119618,
+      "end": 120983,
+      "valid_rows": 1164,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "616bef26ea6f951a199e334f452d1cff0532ca9f374b213f6d11175551610dd6",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/616bef26ea6f951a199e334f452d1cff0532ca9f374b213f6d11175551610dd6.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 481,
+        "1": 100,
+        "2": 583
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 70,
+      "start": 120983,
+      "end": 122586,
+      "valid_rows": 1402,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "fc255da1614faa24d6d7d3dd477290d608f4c6b2d426efcfe0262aa9e36cfad3",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/fc255da1614faa24d6d7d3dd477290d608f4c6b2d426efcfe0262aa9e36cfad3.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 732,
+        "1": 100,
+        "2": 570
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 71,
+      "start": 122586,
+      "end": 124179,
+      "valid_rows": 1392,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "a118c50d7c765e9d9b4f4d0b4c076762edd1b88aed098d93b187877efe9c6901",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/a118c50d7c765e9d9b4f4d0b4c076762edd1b88aed098d93b187877efe9c6901.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 584,
+        "1": 99,
+        "2": 709
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 72,
+      "start": 124179,
+      "end": 125806,
+      "valid_rows": 1426,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "c1274317faf50920a11d8f1908b41fb7b2709f8d01d16d8a9c591f3f3393b380",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/c1274317faf50920a11d8f1908b41fb7b2709f8d01d16d8a9c591f3f3393b380.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 844,
+        "1": 99,
+        "2": 483
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 73,
+      "start": 125806,
+      "end": 127464,
+      "valid_rows": 1456,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "aa92b5e03aa83ec6f8001a8fa310d68cbd12d440702274b2ad6a93129068d907",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/aa92b5e03aa83ec6f8001a8fa310d68cbd12d440702274b2ad6a93129068d907.npz",
+      "phase_counts": {
+        "-1": 202,
+        "0": 774,
+        "1": 120,
+        "2": 562
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 74,
+      "start": 127464,
+      "end": 129208,
+      "valid_rows": 1544,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "da57785e8113072d18d828a420f92067eb13ed09803703e2d5852ce4957c3df5",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/da57785e8113072d18d828a420f92067eb13ed09803703e2d5852ce4957c3df5.npz",
+      "phase_counts": {
+        "-1": 200,
+        "0": 711,
+        "1": 100,
+        "2": 733
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 75,
+      "start": 129208,
+      "end": 130763,
+      "valid_rows": 1354,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "33cd26f47e2fd8b726282faf9062a182bd1837dff8a849e7fd085e1728eaf197",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/33cd26f47e2fd8b726282faf9062a182bd1837dff8a849e7fd085e1728eaf197.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 772,
+        "1": 99,
+        "2": 483
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 76,
+      "start": 130763,
+      "end": 132360,
+      "valid_rows": 1396,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "56422e02b6ca9d4ede38ccf12850f22e92bb9a7a4e9faad62cf58c3c12a9f3d7",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/56422e02b6ca9d4ede38ccf12850f22e92bb9a7a4e9faad62cf58c3c12a9f3d7.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 691,
+        "1": 99,
+        "2": 606
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 77,
+      "start": 132360,
+      "end": 133854,
+      "valid_rows": 1292,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "a113f3df7f88653d29d4709521c6b9391fef696a78ae5c68bc0497e777aa4901",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/a113f3df7f88653d29d4709521c6b9391fef696a78ae5c68bc0497e777aa4901.npz",
+      "phase_counts": {
+        "-1": 202,
+        "0": 569,
+        "1": 99,
+        "2": 624
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 78,
+      "start": 133854,
+      "end": 135388,
+      "valid_rows": 1332,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "4299cac8e2819855a274ef7068223d13267db3b76a93e5d31abe585b04d99535",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/4299cac8e2819855a274ef7068223d13267db3b76a93e5d31abe585b04d99535.npz",
+      "phase_counts": {
+        "-1": 202,
+        "0": 625,
+        "1": 99,
+        "2": 608
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 79,
+      "start": 135388,
+      "end": 136948,
+      "valid_rows": 1359,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "569c054d2c018f63ca91544704d889f253b5e63c1b2c79708538dec55caf62d5",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/569c054d2c018f63ca91544704d889f253b5e63c1b2c79708538dec55caf62d5.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 634,
+        "1": 138,
+        "2": 587
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 80,
+      "start": 136948,
+      "end": 138663,
+      "valid_rows": 1514,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "63e7ea30cb39ae578173e82b9723b6443523f7f4610813878753b4dd79c2e911",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/63e7ea30cb39ae578173e82b9723b6443523f7f4610813878753b4dd79c2e911.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 727,
+        "1": 100,
+        "2": 687
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 81,
+      "start": 138663,
+      "end": 140284,
+      "valid_rows": 1420,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "bf275035362400cdc5c217b8547f4d8c10fcf40aba8e9333fe4edafb7479c023",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/bf275035362400cdc5c217b8547f4d8c10fcf40aba8e9333fe4edafb7479c023.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 685,
+        "1": 99,
+        "2": 636
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 82,
+      "start": 140284,
+      "end": 141942,
+      "valid_rows": 1456,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "4dd41d04cba8afd3e68256a80f00efa8412fd8afff948deb0be12be4d74d5231",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/4dd41d04cba8afd3e68256a80f00efa8412fd8afff948deb0be12be4d74d5231.npz",
+      "phase_counts": {
+        "-1": 202,
+        "0": 720,
+        "1": 99,
+        "2": 637
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 83,
+      "start": 141942,
+      "end": 143465,
+      "valid_rows": 1323,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "36b3edea78c6705c25796153da8f007d0d5f2f5ed69cc9961278fa6919db147b",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/36b3edea78c6705c25796153da8f007d0d5f2f5ed69cc9961278fa6919db147b.npz",
+      "phase_counts": {
+        "-1": 200,
+        "0": 659,
+        "1": 239,
+        "2": 425
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 84,
+      "start": 143465,
+      "end": 144918,
+      "valid_rows": 1251,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "ca1b649741da80b120171d0dcea302ab36a44e5a2ab11be84cf64aa6078840bf",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/ca1b649741da80b120171d0dcea302ab36a44e5a2ab11be84cf64aa6078840bf.npz",
+      "phase_counts": {
+        "-1": 202,
+        "0": 535,
+        "1": 100,
+        "2": 616
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 85,
+      "start": 144918,
+      "end": 146372,
+      "valid_rows": 1253,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "16219be336c8d717aa742ea30c3190a9c2059fd1d55df62ea5652418827efeb6",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/16219be336c8d717aa742ea30c3190a9c2059fd1d55df62ea5652418827efeb6.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 514,
+        "1": 171,
+        "2": 568
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 86,
+      "start": 146372,
+      "end": 147851,
+      "valid_rows": 1278,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "bf6a47df3e107e1342dc387c2d384bbcdeee481ef92edb4a9029675568c502e1",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/bf6a47df3e107e1342dc387c2d384bbcdeee481ef92edb4a9029675568c502e1.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 604,
+        "1": 99,
+        "2": 575
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 87,
+      "start": 147851,
+      "end": 149358,
+      "valid_rows": 1305,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "c47b6c11b2e43a54e1f5fb6c617972d4e333b6d7bbe77003f3d5407bee1c784b",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/c47b6c11b2e43a54e1f5fb6c617972d4e333b6d7bbe77003f3d5407bee1c784b.npz",
+      "phase_counts": {
+        "-1": 202,
+        "0": 595,
+        "1": 133,
+        "2": 577
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 88,
+      "start": 149358,
+      "end": 150851,
+      "valid_rows": 1291,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "a13fec5974cbce606a8acc191148e78f32a55603f7382f74f36a76175f44ba8d",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/a13fec5974cbce606a8acc191148e78f32a55603f7382f74f36a76175f44ba8d.npz",
+      "phase_counts": {
+        "-1": 202,
+        "0": 569,
+        "1": 100,
+        "2": 622
+      }
+    },
+    {
+      "source_index": 0,
+      "episode_index": 89,
+      "start": 150851,
+      "end": 152444,
+      "valid_rows": 1392,
+      "restored_source_filters": [
+        "dq",
+        "tau"
+      ],
+      "signature": "40fa6192eb237a98244aba5f593541b5563bf37922c535961b830ba56b70d311",
+      "cache_file": "/mnt/code/lcx/PINN/outputs/cache/wm_tau_labels/40fa6192eb237a98244aba5f593541b5563bf37922c535961b830ba56b70d311.npz",
+      "phase_counts": {
+        "-1": 201,
+        "0": 682,
+        "1": 100,
+        "2": 610
+      }
+    }
+  ],
+  "cache_hits": 90,
+  "cache_misses": 0,
+  "valid_rows": 134343,
+  "phase_rule": {
+    "norm": "tau_ext_l1",
+    "contact_threshold": 11.705677733654019,
+    "comparison": ">",
+    "precontact_duration_s": 1.0,
+    "classes": {
+      "-1": "invalid_context",
+      "0": "free",
+      "1": "alignment",
+      "2": "contact"
+    }
+  },
+  "phase_counts": {
+    "-1": 18101,
+    "0": 65329,
+    "1": 10882,
+    "2": 58132
+  },
+  "label_contract_sha256": "91032c76bf9f801a91c06041c99c89d853c76cc7f4e68a5afed2bedad78f885b"
+}

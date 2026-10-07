@@ -161,6 +161,8 @@ def test_urdf_layout_keeps_active_arm_norms_and_joint_traces_separate(tmp_path, 
     cfg['active_sides'] = sides
     cfg['sides'] = {side: cfg['sides']['right'].copy() for side in sides}
     cfg['force_feedback_mean_windows'] = {side: 5 + 4 * index for index, side in enumerate(sides)}
+    cfg['force_feedback_dynamics_methods'] = {
+        side: 'momentum' if side == 'left' else 'rnea' for side in sides}
     models = {side: Mock(spec=ConstantTorqueModel) for side in sides}
     window = TorqueWindow(cfg, models, headless=True)
     residuals = {'left': np.array([-1., 2., -3., 4., -5., 6., -7.]),
@@ -175,6 +177,8 @@ def test_urdf_layout_keeps_active_arm_norms_and_joint_traces_separate(tmp_path, 
         for index, side in enumerate(sides):
             assert side.title() in window.axes[0, index].get_title()
             assert f'mean {5 + 4 * index} samples' in window.axes[0, index].get_title()
+            assert ('URDF momentum' if side == 'left' else 'URDF RNEA') in (
+                window.axes[0, index].get_title())
             np.testing.assert_array_equal(window.lines[0, index].get_ydata(), [np.abs(residuals[side]).sum()])
             for joint in range(7):
                 np.testing.assert_array_equal(window.lines[joint + 1, index].get_ydata(), [residuals[side][joint]])
@@ -187,6 +191,42 @@ def test_urdf_layout_keeps_active_arm_norms_and_joint_traces_separate(tmp_path, 
         assert (tmp_path/'norm_and_joints.png').stat().st_size > 10000
     finally:
         window.close()
+
+
+def test_collector_passes_each_arm_dynamics_method_to_the_plot_without_hardware(tmp_path):
+    from pathlib import Path
+    import yaml
+    from gello_teleop.dual_gello_collect import DualGelloPipeline
+
+    source = Path(__file__).resolve().parents[1] / 'gello_teleop/config/xarm7_gello_dual_dataset.yaml'
+    raw = yaml.safe_load(source.read_text())
+    raw['active_arms'] = ['left', 'right']
+    raw['gello_config'] = str((source.parent / raw['gello_config']).resolve())
+    urdf = str((source.parent / raw['force_feedback']['urdf_path']).resolve())
+    raw['force_feedback'].update(enabled=True, dynamics_method='momentum', urdf_path=urdf,
+                                 sides={'right': {'dynamics_method': 'rnea'}})
+    raw['torque_visualization'].update(enabled=True, urdf_path=urdf)
+    raw['cameras'] = []
+    raw['require_cameras'] = False
+    raw['gripper'] = {'enabled': False, 'command_enabled': False}
+    config_path = tmp_path / 'plot_methods.yaml'
+    config_path.write_text(yaml.safe_dump(raw))
+    hardware_factory = Mock(side_effect=AssertionError('must not create hardware'))
+    model_factory = Mock(side_effect=AssertionError('must not start dynamics'))
+    pipeline = DualGelloPipeline(config_path, arm_factory=hardware_factory,
+                                 reader_factory=hardware_factory,
+                                 feedback_model_factory=model_factory)
+    try:
+        assert pipeline.torque_visualizer.cfg['force_feedback_dynamics_methods'] == {
+            'left': 'momentum', 'right': 'rnea'}
+        assert pipeline.torque_visualizer.cfg['force_feedback_source'] == 'urdf'
+        assert pipeline.torque_visualizer.cfg['force_feedback_mean_windows'] == {
+            side: pipeline.force_feedback.settings[side]['tau_ext_mean_window']
+            for side in pipeline.ARM_NAMES}
+        hardware_factory.assert_not_called()
+        model_factory.assert_not_called()
+    finally:
+        pipeline.close()
 
 
 @pytest.mark.parametrize('source', [None, 'checkpoint'])

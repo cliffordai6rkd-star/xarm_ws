@@ -182,7 +182,7 @@ class DiffusionPolicy:
         if callable(reset):
             reset()
 
-    def predict_observations(self, observations) -> ActionChunk:
+    def predict_observations(self, observations, *, plan_steps=None) -> ActionChunk:
         """Use an acquisition-time window even when inference skips camera frames."""
         if not observations:
             raise ValueError("DP observation window is empty")
@@ -191,9 +191,9 @@ class DiffusionPolicy:
         self._last_timestamp_us = None
         for observation in observations[-self.n_obs_steps:]:
             self._append_images(observation)
-        return self.predict(observations[-1])
+        return self.predict(observations[-1], plan_steps=plan_steps)
 
-    def predict(self, observation: Observation) -> ActionChunk:
+    def predict(self, observation: Observation, *, plan_steps=None) -> ActionChunk:
         """Append one aligned observation and return the next action chunk."""
 
         self._append_images(observation)
@@ -208,7 +208,19 @@ class DiffusionPolicy:
 
         with torch.inference_mode():
             output = self._predict_action(model_input)
-        values = output["action"] if isinstance(output, Mapping) else output
+        if plan_steps is not None:
+            if (type(plan_steps) is not int or plan_steps < 1
+                    or getattr(self.model, "pred_action_steps_only", False)):
+                raise ValueError("Extended DP plans require a positive length and full-horizon prediction")
+            if not isinstance(output, Mapping) or "action_pred" not in output:
+                raise ValueError("DP must expose action_pred for an extended action plan")
+            start = int(getattr(self.model, "action_start_index", self.n_obs_steps - 1))
+            full = self._to_numpy(output["action_pred"])
+            if full.ndim != 3 or full.shape[0] != 1 or start < 0 or start + plan_steps > full.shape[1]:
+                raise ValueError("DP full prediction cannot cover the requested action plan")
+            values = full[:, start:start + plan_steps]
+        else:
+            values = output["action"] if isinstance(output, Mapping) else output
         values = self._to_numpy(values)
         if values.ndim == 3:
             values = values[0]
@@ -217,7 +229,7 @@ class DiffusionPolicy:
                 "DP must return action shape [B,H,D] or [H,D], "
                 f"got {values.shape}"
             )
-        values = values[: self.action_steps]
+        values = values[: self.action_steps if plan_steps is None else plan_steps]
         return ActionChunk(
             values=values,
             semantic=self.action_semantic,
@@ -340,7 +352,7 @@ class DiffusionPolicy:
                 )
             )
             end = start + int(self.model.n_action_steps)
-            return {"action": action_prediction[:, start:end]}
+            return {"action": action_prediction[:, start:end], "action_pred": action_prediction}
 
         predict_action = getattr(self.model, "predict_action", None)
         if not callable(predict_action):

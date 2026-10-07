@@ -1,0 +1,50 @@
+{
+  "run_root": "/mnt/code/lcx/PINN/outputs/latent_wm_v2/nero_pretrain_xarm_sft",
+  "order": [
+    "nero_all",
+    [
+      "xarm_peel_cucumber",
+      "xarm_erase_board"
+    ]
+  ],
+  "tasks": {
+    "nero_all": {
+      "config": "/mnt/code/lcx/PINN/outputs/latent_wm_v2/nero_pretrain_xarm_sft/configs/nero_pretrain_all.yaml",
+      "output": "/mnt/code/lcx/PINN/outputs/latent_wm_v2/nero_pretrain_xarm_sft/nero_all",
+      "batch_size": 256,
+      "lr": 0.0001,
+      "optimizer_steps": 250000,
+      "device": "cuda:0",
+      "stage": "all"
+    },
+    "xarm_peel_cucumber": {
+      "config": "/mnt/code/lcx/PINN/outputs/latent_wm_v2/nero_pretrain_xarm_sft/configs/xarm_peel_cucumber_sft.yaml",
+      "output": "/mnt/code/lcx/PINN/outputs/latent_wm_v2/nero_pretrain_xarm_sft/xarm_peel_cucumber",
+      "batch_size": 128,
+      "lr": 3e-05,
+      "optimizer_steps": 50000,
+      "device": "cuda:0",
+      "stage": "sft"
+    },
+    "xarm_erase_board": {
+      "config": "/mnt/code/lcx/PINN/outputs/latent_wm_v2/nero_pretrain_xarm_sft/configs/xarm_erase_board_sft.yaml",
+      "output": "/mnt/code/lcx/PINN/outputs/latent_wm_v2/nero_pretrain_xarm_sft/xarm_erase_board",
+      "batch_size": 128,
+      "lr": 3e-05,
+      "optimizer_steps": 50000,
+      "device": "cuda:0",
+      "stage": "sft"
+    }
+  },
+  "codec": {
+    "batch_size": 256,
+    "lr": 0.0003,
+    "optimizer_steps": 20000
+  },
+  "position_encoding": "contact_wm_learned_index",
+  "window": {
+    "history": 50,
+    "future": 32,
+    "action": 8
+  }
+}

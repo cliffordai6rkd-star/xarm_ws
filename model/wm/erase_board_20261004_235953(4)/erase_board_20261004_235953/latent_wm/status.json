@@ -1,0 +1,12 @@
+{
+  "status": "ready",
+  "pid": 2818055,
+  "stage": "flow",
+  "codec_step": 10000,
+  "flow_step": 250000,
+  "flow_budget": 250000,
+  "codec_budget": 10000,
+  "output_dir": "/mnt/code/lcx/PINN/outputs/xarm_wm_flow_sweep/erase_board_20261004_235953/latent_wm",
+  "codec_ready": true,
+  "updated_at_unix": 1791140863.3136494
+}

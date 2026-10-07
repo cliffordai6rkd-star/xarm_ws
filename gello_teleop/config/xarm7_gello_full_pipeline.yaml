@@ -8,6 +8,15 @@ torque_visualization:
   window_s: 30.0
   update_hz: 10.0
   stale_s: 0.15
+  learned_torque:
+    enabled: true
+    sides: [right]
+    device: cpu
+    threads: 2
+    delay_s: 1.5
+    buffer_s: 4.0
+    interval_s: 0.1
+    thresholds_l1: [5.4734632, 10.0]
   payload:
     source: controller  # SDK rich report: Studio 中已设置的末端负载质量和法兰系质心
   sides: {}

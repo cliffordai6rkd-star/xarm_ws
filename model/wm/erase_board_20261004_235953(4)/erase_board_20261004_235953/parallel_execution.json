@@ -1,0 +1,11 @@
+{
+  "mode": "parallel_on_shared_gpu",
+  "supervisor_pid": 2751202,
+  "contact_pid": 2748131,
+  "latent_pid": 2751203,
+  "started_unix": 1791129978.6259043,
+  "final_evaluations": "sequential after both training processes exit",
+  "training_workers_finished_unix": 1791140814.3085241,
+  "memory_fallback": false,
+  "latent_exit_code": 0
+}

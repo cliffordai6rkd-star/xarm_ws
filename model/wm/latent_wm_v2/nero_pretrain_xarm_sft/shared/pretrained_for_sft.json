@@ -1,0 +1,5 @@
+{
+  "source": "/mnt/code/lcx/PINN/outputs/latent_wm_v2/nero_pretrain_xarm_sft/nero_all/checkpoints/step_00250000.pt",
+  "checkpoint": "/mnt/code/lcx/PINN/outputs/latent_wm_v2/nero_pretrain_xarm_sft/shared/pretrained_for_sft.pt",
+  "sha256": "ad9cae9a4c109ba7f5f832a4fe9e4a0c2de5fdbd030bb043b14589509f471472"
+}

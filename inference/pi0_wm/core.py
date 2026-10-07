@@ -3,8 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from queue import Queue, Empty
-from threading import Thread
+from threading import Condition, Thread
 import time
 from typing import Any, Callable
 
@@ -126,46 +125,71 @@ class Worker:
     """One permanent thread, one in-flight job including an unconsumed result."""
     def __init__(self, name: str, infer: Callable):
         self.infer = infer
-        self.jobs = Queue(maxsize=1)
-        self.results = Queue(maxsize=1)
-        self.busy = False
+        self.condition = Condition()
+        self.request = self.result = None
+        self.in_flight = self.closed = False
+        self.generation = 0
         self.thread = Thread(target=self._run, name=name, daemon=True)
         self.thread.start()
 
+    @property
+    def busy(self):
+        with self.condition:
+            return self.in_flight or self.request is not None or self.result is not None
+
     def submit(self, request):
-        if self.busy:
-            raise RuntimeError("worker already has an in-flight request")
-        self.busy = True
-        self.jobs.put_nowait(request)
+        with self.condition:
+            if self.closed:
+                raise RuntimeError("worker is closed")
+            if self.busy:
+                raise RuntimeError("worker already has an in-flight request")
+            self.request = (self.generation, request)
+            self.condition.notify_all()
+
+    def cancel(self):
+        with self.condition:
+            self.generation += 1
+            self.request = self.result = None
+            # Retain in_flight until infer returns. The same model must never
+            # be used concurrently by the cancelled and next episode.
+            self.condition.notify_all()
 
     def _run(self):
         while True:
-            request = self.jobs.get()
-            if request is None:
-                return
+            with self.condition:
+                self.condition.wait_for(lambda: self.closed or self.request is not None)
+                if self.closed:
+                    return
+                generation, request = self.request
+                self.request = None
+                self.in_flight = True
             try:
                 value = self.infer(request.payload)
                 result = Result(request, value, time.perf_counter() - request.started)
             except BaseException as exc:
                 result = Result(request, None, time.perf_counter() - request.started, exc)
-            self.results.put(result)
+            with self.condition:
+                if generation == self.generation and not self.closed:
+                    self.result = result
+                self.in_flight = False
+                self.condition.notify_all()
 
     def poll(self):
-        try:
-            result = self.results.get_nowait()
-        except Empty:
+        with self.condition:
+            result, self.result = self.result, None
+        if result is None:
             return None
-        self.busy = False
         if result.error is not None:
             raise RuntimeError(f"{self.thread.name} request {result.request.request_id} failed") from result.error
         return result
 
     def close(self):
         # A remote infer may block. Never join it indefinitely on shutdown.
-        try:
-            self.jobs.put_nowait(None)
-        except Exception:
-            pass
+        with self.condition:
+            self.closed = True
+            self.generation += 1
+            self.request = self.result = None
+            self.condition.notify_all()
         self.thread.join(timeout=0.2)
 
 

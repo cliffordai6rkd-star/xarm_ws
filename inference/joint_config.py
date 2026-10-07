@@ -54,20 +54,47 @@ class JointDeployment:
     observation: dict = field(default_factory=dict)
     execution: dict = field(default_factory=dict)
     joint_limits: dict = field(default_factory=dict)
+    ik: dict = field(default_factory=dict)
 
     @classmethod
     def load(cls, path, *, checkpoint=None, device=None, active_arms=None):
         path = Path(path).expanduser().resolve()
         data = yaml.safe_load(path.read_text())
+        if data.get('pipeline') in ('pi0_contact_wm', 'pi0_latent_wm') and data.get('wm', {}).get('enabled') is False:
+            # Reuse the same deployment YAML when the world model is disabled.
+            observation = data['observation']
+            data.setdefault('hardware_config', observation['hardware_config'])
+            data.setdefault('active_arms', [observation['arm']])
+            for source, target in (('maximum_age_ms', 'maximum_camera_age_s'),
+                                   ('maximum_age_ms', 'maximum_state_age_s'),
+                                   ('maximum_camera_skew_ms', 'maximum_camera_skew_s')):
+                if source in observation:
+                    observation.setdefault(target, observation[source]/1000.)
+            execution = data.setdefault('execution', {})
+            execution.setdefault('open_loop', True)
+            execution.setdefault('startup_timeout_s', data['pi0'].get('request_timeout_s', 180.) + 60.)
+            execution.setdefault('quiet', True)
+            execution.setdefault('log_timing', True)
         policy = dict(data["policy"])
         algorithm = str(policy["type"]).lower()
-        if algorithm not in {"dp", "act"}:
-            raise ValueError("policy.type must be dp or act")
+        if algorithm not in {"dp", "act", "pi0"}:
+            raise ValueError("policy.type must be dp, act or pi0")
         policy["type"] = algorithm
-        policy["checkpoint"] = resolve_checkpoint(
-            resolve_path(checkpoint, Path.cwd()) if checkpoint else
-            resolve_path(policy["checkpoint"], path.parent), algorithm)
-        for key in ("dataset_path", "source_path", "config_path", "stats_path"):
+        if algorithm == "pi0":
+            if checkpoint is not None:
+                raise ValueError("pi0 checkpoints are loaded on the inference server")
+            if data.get("wm", {}).get("enabled", False):
+                raise ValueError("The direct pi0 adapter requires wm.enabled: false")
+            policy["pi0"] = dict(data["pi0"])
+            for key in ("local_checkpoint", "local_source_path"):
+                if policy["pi0"].get(key):
+                    policy["pi0"][key] = resolve_path(policy["pi0"][key], path.parent)
+            policy["checkpoint"] = None
+        else:
+            policy["checkpoint"] = resolve_checkpoint(
+                resolve_path(checkpoint, Path.cwd()) if checkpoint else
+                resolve_path(policy["checkpoint"], path.parent), algorithm)
+        for key in ("dataset_path", "source_path", "config_path", "stats_path", "client_source_path"):
             if policy.get(key):
                 policy[key] = resolve_path(policy[key], path.parent)
         if device:
@@ -81,6 +108,17 @@ class JointDeployment:
             raise ValueError("active_arms must select left, right or both without duplicates")
         # An explicit side order is the action/qpos concatenation order.
         control = hardware.get("control", {})
+        initial_q = data.get("execution", {}).get("initial_q", {})
+        if not isinstance(initial_q, dict) or set(initial_q) - {"left", "right"}:
+            raise ValueError("execution.initial_q must map left/right to seven joint angles in radians")
+        for side, values in initial_q.items():
+            try:
+                target = np.asarray(values, dtype=float)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"execution.initial_q.{side} must contain seven finite joint angles") from exc
+            if target.shape != (7,) or not np.isfinite(target).all():
+                raise ValueError(f"execution.initial_q.{side} must contain seven finite joint angles")
+            initial_q[side] = target.tolist()
         endpoints = {}
         for side in sides:
             robot = calibration[side]["RobotConfig"]
@@ -89,12 +127,14 @@ class JointDeployment:
                           sdk_timeout_s=control.get("sdk_timeout_s", .1),
                           execution_enabled=False)
             kwargs.setdefault("collision_sensitivity", control.get("collision_sensitivity"))
-            endpoints[side] = ArmEndpointConfig(side, rest_q=tuple(robot["reset_q"]), config_kwargs=kwargs)
+            endpoints[side] = ArmEndpointConfig(
+                side, rest_q=tuple(initial_q.get(side, robot["reset_q"])), config_kwargs=kwargs)
         cameras = []
         for item in hardware.get("cameras", []):
             item = dict(item)
             item.pop("arm", None)
             if item.get("enabled", True):
+                item["preview_output_size"] = (224, 224)
                 cameras.append(CameraConfig(**item))
         names = [camera.name for camera in cameras]
         if len(set(names)) != len(names):
@@ -102,9 +142,17 @@ class JointDeployment:
         execution = dict(data.get("execution", {}))
         observation = dict(data.get("observation", {}))
         defaults = {"control_hz": control.get("sample_rate_hz", 100),
-                    "maximum_prediction_age_s": 1., "startup_timeout_s": 15.}
+                    "maximum_prediction_age_s": 1., "startup_timeout_s": 15., "warmup_steps": 1,
+                    "prediction_prefetch_margin_s": .1, "open_loop": False,
+                    "reset_on_start": False, "quiet": False, "log_timing": False}
         for key, value in defaults.items():
             execution.setdefault(key, value)
+        warmup_steps = execution["warmup_steps"]
+        if isinstance(warmup_steps, bool) or not isinstance(warmup_steps, int) or warmup_steps < 0:
+            raise ValueError("warmup_steps must be a nonnegative integer")
+        for key in ("open_loop", "reset_on_start", "quiet", "log_timing"):
+            if not isinstance(execution[key], bool):
+                raise ValueError(f"{key} must be a boolean")
         for key, value in {"maximum_camera_age_s": .3, "maximum_camera_skew_s": .06,
                            "maximum_state_age_s": control.get("state_max_age_s", .15),
                            "maximum_alignment_gap_s": .15}.items():
@@ -128,8 +176,15 @@ class JointDeployment:
                 if value.shape != (7, 2) or not np.isfinite(value).all() or np.any(value[:, 0] >= value[:, 1]):
                     raise ValueError(f"Invalid joint limits on {side}")
                 joint_limits[side] = value
+                if side in initial_q:
+                    target = np.asarray(initial_q[side])
+                    if np.any(target < value[:, 0]) or np.any(target > value[:, 1]):
+                        raise ValueError(f"execution.initial_q.{side} is outside joint limits")
+        ik = dict(data.get('ik', {}))
+        if ik.get('urdf_path'):
+            ik['urdf_path'] = resolve_path(ik['urdf_path'], path.parent)
         return cls(path, policy, hardware_path, hardware, sides, endpoints,
-                   tuple(cameras), observation, execution, joint_limits)
+                   tuple(cameras), observation, execution, joint_limits, ik)
 
 
 def _dataset_info(path):
@@ -147,7 +202,19 @@ def load_joint_policy(config: JointDeployment):
     if options.get("source_path") and algorithm == "dp":
         sys.path.insert(0, str(options["source_path"]))
     device = options.get("device", "cuda:0")
-    if algorithm == "dp":
+    if algorithm == "pi0":
+        from inference.policies.pi0_joint import Pi0JointPolicy
+
+        policy = Pi0JointPolicy(options["pi0"], client_source_path=options.get("client_source_path"))
+        if policy.action_type == 'eepose':
+            from inference.pose_action_adapter import PoseActionAdapter
+
+            if len(config.active_arms) != 1:
+                raise ValueError('A seven-dimensional pi0 EEP pose selects exactly one active arm')
+            policy.pose_adapter = PoseActionAdapter(config.ik, policy.interface,
+                                                    joint_limits=config.joint_limits.get(config.active_arms[0]))
+        info = {}
+    elif algorithm == "dp":
         from inference.policies.dp.policy import DiffusionPolicy
 
         policy = DiffusionPolicy.from_checkpoint(
@@ -195,7 +262,9 @@ def load_joint_policy(config: JointDeployment):
         policy = ACTPolicy.from_checkpoint(
             checkpoint, device=device, image_shapes=shapes,
             source_path=options.get("source_path"), config_path=options.get("config_path"),
-            stats_path=options.get("stats_path"), action_steps=options.get("action_steps"))
+            stats_path=options.get("stats_path"), action_steps=options.get("action_steps"),
+            brightness_jitter=options.get("brightness_jitter", 0.),
+            brightness_seed=options.get("brightness_seed"))
     expected = 7 * len(config.active_arms)
     if policy.action_dim != expected:
         raise ValueError(f"Checkpoint outputs {policy.action_dim} values, but active_arms="
@@ -209,6 +278,8 @@ def load_joint_policy(config: JointDeployment):
         fps = float(fps)
         if not np.isfinite(fps) or fps <= 0:
             raise ValueError("Training action FPS must be positive and finite")
+        if algorithm == "pi0" and not np.isclose(fps, 1. / policy.step_s):
+            raise ValueError("execution.action_rate_hz differs from the pi0 training interface")
         policy.step_s = 1. / fps
     if policy.step_s is None:
         raise ValueError("Cannot determine action timing; set execution.action_rate_hz to training FPS")
@@ -217,7 +288,9 @@ def load_joint_policy(config: JointDeployment):
     if set(shapes) != set(required_keys):
         raise ValueError("Checkpoint must describe every required camera's [3,H,W] shape")
     camera_map = config.observation.get("camera_map", {})
-    mapping = {key: camera_map.get(key, key.removeprefix("observation.images.")) for key in required_keys}
+    policy_camera_map = getattr(policy, "camera_map", {})
+    mapping = {key: camera_map.get(key, policy_camera_map.get(key, key.removeprefix("observation.images.")))
+               for key in required_keys}
     if len(set(mapping.values())) != len(mapping):
         raise ValueError("Each checkpoint camera must map to a separate hardware camera")
     names = {camera.name for camera in config.cameras}
@@ -236,9 +309,28 @@ def load_joint_policy(config: JointDeployment):
 
 
 def policy_report(config, policy, mapping):
-    return {"status": "ok", "policy": config.policy["type"],
+    report = {"status": "ok", "policy": config.policy["type"],
             "checkpoint": str(config.policy["checkpoint"]), "active_arms": list(config.active_arms),
             "action": "absolute joint q (rad)", "action_dim": policy.action_dim,
             "action_steps": policy.action_steps, "action_rate_hz": 1. / policy.step_s,
             "n_obs_steps": policy.n_obs_steps, "camera_map": mapping,
             "image_shapes": policy.image_shapes, "hardware_config": str(config.hardware_config)}
+    if config.policy["type"] == "act":
+        report["brightness_jitter"] = policy.brightness_jitter
+        report["brightness_seed"] = policy.brightness_seed
+    if config.policy["type"] == "pi0":
+        report["server"] = policy.config["host"] + ":" + str(policy.config["port"])
+        report["interface"] = policy.interface
+        report["server_contract_verified"] = policy.server_verified
+        report["checkpoint"] = "loaded by openpi server"
+        if policy.config.get("local", False):
+            report["server"] = None
+            report["checkpoint"] = str(policy.config["local_checkpoint"])
+            report["local"] = True
+            report["server_contract_verified"] = False
+        report['model_action_type'] = policy.action_type
+        if policy.action_type == 'eepose':
+            report['action'] = 'absolute EEP pose -> local IK -> joint q (rad)'
+            report['ik'] = {key: str(value) if isinstance(value, Path) else value
+                            for key, value in config.ik.items()}
+    return report

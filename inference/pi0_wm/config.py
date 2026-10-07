@@ -78,4 +78,16 @@ def load_config(path):
     low, high, limit = [np.asarray(hw[k], dtype=float) for k in ('q_min', 'q_max', 'maximum_step_rad')]
     if any(x.shape != (7,) or not np.isfinite(x).all() for x in (low, high, limit)) or np.any(low >= high) or np.any(limit <= 0):
         raise ValueError('hardware joint bounds/step limits must be finite seven-vectors')
+    for key in ('reset_q',):
+        target = hw.get(key)
+        if target is not None:
+            target = np.asarray(target, dtype=float)
+            if (target.shape != (7,) or not np.isfinite(target).all()
+                    or np.any(target < low) or np.any(target > high)):
+                raise ValueError(f'hardware.{key} must contain seven finite joint angles within bounds')
+    for key in ('reset_speed_rad_s', 'reset_timeout_s', 'reset_tolerance_rad'):
+        if key in hw:
+            positive(hw[key], f'hardware.{key}')
+    if 'reset_samples' in hw:
+        positive(hw['reset_samples'], 'hardware.reset_samples', integer=True)
     return config

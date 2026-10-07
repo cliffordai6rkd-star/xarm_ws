@@ -18,6 +18,7 @@ import time
 import numpy as np
 
 from xarm_stack.momentum import PinocchioMomentumModel
+from xarm_stack.learned_torque import learned_config
 
 log = logging.getLogger(__name__)
 SIDES = ('left', 'right')
@@ -67,6 +68,9 @@ def plot_config(raw, config_path, active_sides):
             raise ValueError(f'torque_visualization.{key} must be positive')
         cfg[key] = value
     cfg['active_sides'] = tuple(active_sides)
+    cfg['learned_torque'] = learned_config(raw.get('learned_torque', {}), config_path, active_sides)
+    if cfg['learned_torque'].get('enabled') and cfg['window_s'] <= cfg['learned_torque']['delay_s']:
+        raise ValueError('torque_visualization.window_s must exceed learned_torque.delay_s')
     cfg['sides'] = {}
     for side in active_sides:
         settings = dict(raw)
@@ -299,6 +303,21 @@ class TorqueWindow:
         self.urdf_feedback_view = cfg.get('force_feedback_source') == 'urdf'
         rows, columns = (8, len(self.layout_sides)) if self.urdf_feedback_view else (7, 2*len(self.layout_sides))
         figure_size = (7*len(self.layout_sides), 10) if self.urdf_feedback_view else (8.5*len(self.layout_sides), 10)
+        self.learned_streams, self.learned_columns = {}, {}
+        learned = cfg.get('learned_torque', {})
+        if learned.get('enabled') and learned.get('sides'):
+            from xarm_stack.learned_torque import LearnedTorqueModel, DelayedTorqueStream
+            network = LearnedTorqueModel(learned['checkpoint'], learned['device'], learned['threads'])
+            for side in learned['sides']:
+                if self.urdf_feedback_view:
+                    self.learned_columns[side] = columns
+                    columns += 1
+                else:
+                    self.learned_columns[side] = 2*self.layout_sides.index(side)
+                self.learned_streams[side] = DelayedTorqueStream(network, learned, cfg['window_s'], cfg['stale_s'])
+            rows = 8
+            figure_size = (figure_size[0]+(5*len(self.learned_streams) if self.urdf_feedback_view else 0), 12)
+        self.learned_norm_row = 0 if self.urdf_feedback_view else 7
         self.figure, self.axes = plt.subplots(rows, columns, figsize=figure_size,
                                              sharex=True, squeeze=False)
         self.figure.canvas.manager.set_window_title(
@@ -310,8 +329,10 @@ class TorqueWindow:
             if self.urdf_feedback_view:
                 axis = self.axes[0, side_index]
                 mean_window = cfg.get('force_feedback_mean_windows', {}).get(side)
-                title = (f'||tau_ext||₁ (URDF, mean {mean_window} samples)'
-                         if mean_window is not None else '||tau_ext||₁ (URDF, moving mean)')
+                method = cfg.get('force_feedback_dynamics_methods', {}).get(side)
+                model_label = 'URDF' + (f' {"RNEA" if method == "rnea" else method}' if method else '')
+                title = (f'||tau_ext||₁ ({model_label}, mean {mean_window} samples)'
+                         if mean_window is not None else f'||tau_ext||₁ ({model_label}, moving mean)')
                 axis.set_title(f'{side.title()} | tau_ext_l1 = {title}', fontsize=10)
                 self.lines[0, side_index], = axis.plot([], [], color='#1976d2', lw=1.2)
                 self.labels[0, side_index] = axis.text(.98, .85, '-- Nm', transform=axis.transAxes,
@@ -335,6 +356,8 @@ class TorqueWindow:
                 self.axes[-1, side_index].set_xlabel('Time [s, relative to now]')
                 continue
             for kind in range(2):
+                if kind == 0 and side in self.learned_streams:
+                    continue
                 column = 2*side_index+kind
                 title = 'tau_ext_pred' if kind == 0 else 'tau_ext_cal (URDF)'
                 self.axes[0, column].set_title(f'{side.title()} | {title}', fontsize=10)
@@ -349,6 +372,34 @@ class TorqueWindow:
                     axis.set_xlim(-cfg['window_s'], 0.)
                     axis.set_ylim(-1., 1.)
                 self.axes[-1, column].set_xlabel('Time [s, relative to now]')
+                if self.learned_streams:
+                    self.axes[7, column].set_visible(False)
+                    self.axes[6, column].set_xlabel('Time [s, relative to now]')
+        self.learned_lines, self.learned_labels = {}, {}
+        for side, column in self.learned_columns.items():
+            axis = self.axes[self.learned_norm_row, column]
+            self.axes[0, column].set_title(f'{side.title()} | dynamics + BiLSTM, 5 Hz\n'
+                                            f'display delay >= {learned["delay_s"]:.1f} s', fontsize=10)
+            self.learned_lines[side, 'l1'], = axis.plot([], [], color='#087f5b', lw=1.3, label='L1: sum |tau_ext|')
+            self.learned_lines[side, 'l2'], = axis.plot([], [], color='#7048e8', lw=1., ls='--', label='L2: sqrt sum squares')
+            for name, value, color in zip(('a', 'b'), learned.get('thresholds_l1', []), ('orange', 'red')):
+                axis.axhline(value, color=color, ls=':', lw=.8, label=f'L1 {name}={value:.2f}')
+            axis.legend(loc='upper left', fontsize=6, ncol=2)
+            axis.set_ylabel('||tau_ext|| [Nm]')
+            self.learned_labels[side, 0] = axis.text(.98, .1, 'buffering', transform=axis.transAxes,
+                                                   ha='right', fontsize=7)
+            for joint in range(7):
+                row = joint+1 if self.urdf_feedback_view else joint
+                axis = self.axes[row, column]
+                self.learned_lines[side, joint], = axis.plot([], [], color='#087f5b', lw=1.1)
+                self.learned_labels[side, joint+1] = axis.text(.98, .85, '-- Nm', transform=axis.transAxes,
+                                                              ha='right', fontsize=8)
+                axis.set_ylabel(f'J{joint+1} [Nm]', fontsize=8)
+                axis.axhline(0., color='gray', lw=.7, ls='--')
+            for axis in self.axes[:, column]:
+                axis.grid(alpha=.25)
+                axis.set_xlim(-cfg['window_s'], 0.)
+            self.axes[-1, column].set_xlabel('Source time [s, relative to now]')
         self.figure.tight_layout(rect=(.03, 0, 1, .96))
         self.figure.canvas.mpl_connect('key_press_event', self._key)
         if not headless:
@@ -359,10 +410,39 @@ class TorqueWindow:
             self.close()
 
     def ingest(self, snapshots, now):
+        for side, stream in self.learned_streams.items():
+            if side in snapshots:
+                stream.append(snapshots[side], now)
         with self.lock:
             for side, sample in snapshots.items():
                 if side in self.history:
                     self.history[side].ingest(sample, now)
+
+    def update_learned(self, now):
+        for stream in self.learned_streams.values():
+            stream.update(now)
+
+    def _draw_learned(self, now):
+        for side, stream in self.learned_streams.items():
+            column = self.learned_columns[side]
+            t, residual = stream.arrays(now)
+            l1, l2 = np.abs(residual).sum(axis=1), np.linalg.norm(residual, axis=1)
+            self.learned_lines[side, 'l1'].set_data(t, l1)
+            self.learned_lines[side, 'l2'].set_data(t, l2)
+            label = f'L1 {l1[-1]:.2f} / L2 {l2[-1]:.2f} Nm' if len(l1) and np.isfinite(l1[-1]) else '-- Nm'
+            self.learned_labels[side, 0].set_text(label+' | '+stream.status)
+            finite = l1[np.isfinite(l1)]
+            top = max([1., *finite, *self.cfg['learned_torque'].get('thresholds_l1', [])])*1.15
+            self.axes[self.learned_norm_row, column].set_ylim(0., top)
+            for joint in range(7):
+                values = residual[:, joint]
+                self.learned_lines[side, joint].set_data(t, values)
+                latest = values[-1] if len(values) else np.nan
+                self.learned_labels[side, joint+1].set_text(f'{latest:+.3f} Nm' if np.isfinite(latest) else '-- Nm')
+                finite = values[np.isfinite(values)]
+                bound = max(.1, float(np.max(np.abs(finite)))*1.2) if finite.size else 1.
+                row = joint+1 if self.urdf_feedback_view else joint
+                self.axes[row, column].set_ylim(-bound, bound)
 
     def draw(self, now):
         for side_index, side in enumerate(self.layout_sides):
@@ -394,11 +474,14 @@ class TorqueWindow:
                 bound = max(.1, float(np.max(np.abs(finite)))*1.2) if finite.size else 1.
                 for kind, (timestamps, values) in enumerate(((prediction_t, predicted_residual),
                                                            (t, calculated_residual))):
+                    if kind == 0 and side in self.learned_streams:
+                        continue
                     column = 2*side_index+kind
                     self.lines[joint, column].set_data(timestamps, values[:, joint])
                     latest = values[-1, joint] if len(values) else np.nan
                     self.labels[joint, column].set_text(f'{latest:+.3f} Nm' if np.isfinite(latest) else '-- Nm')
                     self.axes[joint, column].set_ylim(-bound, bound)
+        self._draw_learned(now)
         self.figure.canvas.draw_idle()
         self.figure.canvas.flush_events()
 
@@ -415,6 +498,7 @@ class TorqueWindow:
 def _plot_worker(cfg, samples, stop, ready):
     window = None
     consumer = None
+    predictor = None
     try:
         window = TorqueWindow(cfg, make_models(cfg))
         def consume():
@@ -432,6 +516,18 @@ def _plot_worker(cfg, samples, stop, ready):
                 stop.set()
         consumer = threading.Thread(target=consume, name='torque-model', daemon=True)
         consumer.start()
+        if window.learned_streams:
+            def predict():
+                try:
+                    while not stop.is_set():
+                        begin = time.monotonic()
+                        window.update_learned(time.time())
+                        stop.wait(max(.005, cfg['learned_torque']['interval_s']-(time.monotonic()-begin)))
+                except Exception:
+                    log.exception('Learned torque plot worker stopped')
+                    stop.set()
+            predictor = threading.Thread(target=predict, name='learned-torque-plot', daemon=True)
+            predictor.start()
         ready.send(None)
         next_draw = time.monotonic()
         while not stop.is_set() and window.alive():
@@ -450,6 +546,8 @@ def _plot_worker(cfg, samples, stop, ready):
         stop.set()
         if consumer is not None:
             consumer.join(timeout=1.)
+        if predictor is not None:
+            predictor.join(timeout=1.)
         ready.close()
         if window is not None:
             window.close()
@@ -495,7 +593,8 @@ class TorqueVisualizer:
             parent.close()
             child.close()
 
-    def publish(self, sides, states, *, tau_free_results=None, urdf_results=None):
+    def publish(self, sides, states, *, tau_free_results=None, urdf_results=None,
+                q_cmd=None, q_cmd_valid=None, lowdim_timestamp_us=None):
         if self.process is None or not self.process.is_alive():
             if not self._reported_exit:
                 log.info('Torque window closed; collection continues')
@@ -508,6 +607,14 @@ class TorqueVisualizer:
                                ddq_valid=getattr(state, 'ddq_valid', state.dq_valid),
                                torque=np.asarray(state.torque).copy(), torque_valid=state.torque_valid)
                     for side, state in zip(sides, states)}
+        if q_cmd is not None:
+            commands = np.asarray(q_cmd).reshape(len(sides), 7)
+            command_valid = np.ones(len(sides), bool) if q_cmd_valid is None else np.asarray(q_cmd_valid, bool)
+            for i, side in enumerate(sides):
+                snapshot[side]['q_cmd'] = commands[i].copy()
+                snapshot[side]['q_cmd_valid'] = bool(command_valid[i])
+                if lowdim_timestamp_us is not None:
+                    snapshot[side]['lowdim_timestamp_s'] = lowdim_timestamp_us/1e6
         if tau_free_results is not None and self.cfg.get('force_feedback_source') != 'urdf':
             for side, result in zip(sides, tau_free_results):
                 snapshot[side]['tau_free'] = dict(
@@ -547,17 +654,24 @@ class TorqueVisualizer:
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--demo', action='store_true', required=True, help='Synthetic motion; never connect hardware')
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument('--demo', action='store_true', help='Synthetic motion; never connect hardware')
+    source.add_argument('--h5', type=Path, help='Offline lowdim replay with the learned pipeline; no hardware')
     parser.add_argument('--headless', action='store_true')
     parser.add_argument('--duration', type=float, default=5.)
     parser.add_argument('--save-plot')
+    parser.add_argument('--checkpoint', type=Path, help='Exported learned torque artifact for H5 replay')
+    parser.add_argument('--save-predictions', type=Path, help='H5 replay results on original 100 Hz timestamps (.npz)')
     arms = parser.add_mutually_exclusive_group()
     arms.add_argument('--left', dest='active_sides', action='store_const', const=('left',))
     arms.add_argument('--right', dest='active_sides', action='store_const', const=('right',))
-    parser.set_defaults(active_sides=SIDES)
+    parser.set_defaults(active_sides=None)
     args = parser.parse_args(argv)
+    args.active_sides = args.active_sides or (('right',) if args.h5 else SIDES)
     if not np.isfinite(args.duration) or args.duration <= 0:
         parser.error('--duration must be positive')
+    if args.h5:
+        return replay_h5(args)
     cfg = plot_config({'window_s': min(30., args.duration)}, __file__, args.active_sides)
     window = TorqueWindow(cfg, make_models(cfg), headless=args.headless)
     start = time.time()
@@ -590,6 +704,53 @@ def main(argv=None):
         window.draw(start+t)
         if args.save_plot:
             window.save(args.save_plot)
+    finally:
+        window.close()
+    return 0
+
+
+def replay_h5(args):
+    from xarm_stack.learned_torque import read_h5, predict_episode, DEFAULT_CHECKPOINT
+
+    episodes = {side: read_h5(args.h5, side) for side in args.active_sides}
+    cfg = plot_config(dict(window_s=max(3., max(e['t'][-1] for e in episodes.values())),
+                           learned_torque=dict(enabled=True, sides=args.active_sides,
+                                               checkpoint=str((args.checkpoint or DEFAULT_CHECKPOINT).expanduser().resolve()),
+                                               thresholds_l1=[5.4734632, 10.])), __file__, args.active_sides)
+    window = TorqueWindow(cfg, make_models(cfg), headless=args.headless)
+    payload = {}
+    try:
+        for side, episode in episodes.items():
+            result = predict_episode(window.learned_streams[side].model, episode)
+            t = episode['t']
+            # Existing independent RNEA comparison uses the existing causal
+            # filters; the extra column uses matched offline preprocessing.
+            ddq = np.gradient(episode['dq'], t, axis=0)
+            for i, timestamp in enumerate(t):
+                valid = bool(episode['valid'][i])
+                sample = dict(timestamp_s=timestamp, q=episode['q'][i], dq=episode['dq'][i], ddq=ddq[i],
+                              torque=episode['tau'][i], q_valid=valid, dq_valid=valid,
+                              torque_valid=valid, ddq_valid=valid,
+                              tau_free=dict(timestamp_s=timestamp, valid=bool(result['valid_context'][i]),
+                                            tau_measured=result['tau_measured'][i], tau_pred=result['tau_free'][i]))
+                window.history[side].ingest(sample, timestamp)
+            window.learned_streams[side].set_offline_result(result)
+            window.axes[0, window.learned_columns[side]].set_title(
+                f'{side.title()} | dynamics + BiLSTM, 5 Hz\nwhole-record offline filtering', fontsize=10)
+            for key, value in result.items():
+                payload[f'{side}_{key}'] = value
+            payload[f'{side}_timestamp_us'] = episode['timestamp_us']
+            payload[f'{side}_tau_ext_l1'] = np.abs(result['tau_ext']).sum(axis=1)
+            payload[f'{side}_tau_ext_l2'] = np.linalg.norm(result['tau_ext'], axis=1)
+        window.draw(max(e['t'][-1] for e in episodes.values()))
+        if args.save_plot:
+            Path(args.save_plot).parent.mkdir(parents=True, exist_ok=True)
+            window.save(args.save_plot)
+        if args.save_predictions:
+            args.save_predictions.parent.mkdir(parents=True, exist_ok=True)
+            np.savez_compressed(args.save_predictions, **payload)
+        if not args.headless:
+            window.plt.show(block=True)
     finally:
         window.close()
     return 0

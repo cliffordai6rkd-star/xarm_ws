@@ -22,10 +22,16 @@ __all__ = [
     "NeroPipelineRunner",
     "ModularInferenceRunner",
     "Observation",
+    "WmControlLayer",
+    "WmReferenceAligner",
 ]
 
 
 def __getattr__(name):
+    if name in {"WmControlLayer", "WmReferenceAligner"}:
+        from inference.core.wm_control import WmControlLayer, WmReferenceAligner
+
+        return {"WmControlLayer": WmControlLayer, "WmReferenceAligner": WmReferenceAligner}[name]
     # ``inference.pipeline`` imports contracts through this package.  Importing
     # the compatibility runner eagerly would import the pipeline again and
     # create a circular import during the real DP CLI startup.

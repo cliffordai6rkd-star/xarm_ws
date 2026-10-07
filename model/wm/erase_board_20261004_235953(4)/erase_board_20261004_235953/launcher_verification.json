@@ -1,0 +1,228 @@
+{
+  "purpose": "launcher smoke check only; not full-training results",
+  "passed": true,
+  "checks": [
+    "2 contact updates",
+    "2 codec + 2 latent Flow updates",
+    "32/16/8 step evaluations for both models",
+    "contact checkpoint reload before evaluation",
+    "skip completed runs",
+    "six evaluation CSV rows",
+    "bash syntax and Python compilation"
+  ],
+  "records": {
+    "contact_wm": {
+      "model": "contact_wm",
+      "status": "complete",
+      "source_config": "/tmp/xarm_wm_sweep_check_y5fy466n/contact_wm_source.yaml",
+      "config_sha256": "5461c77c3c08d285a46c98ede687c127a7faf7d32310326fc70e4981c5c97cdb",
+      "optimizer_steps": 2,
+      "codec_steps": 0,
+      "training_validation_ode_steps": 32,
+      "training_attempts": [
+        {
+          "started_at": "2026-10-04T23:58:17+08:00",
+          "pid": 2747420,
+          "status": "complete",
+          "ended_at": "2026-10-04T23:58:25+08:00",
+          "seconds": 8.109279187978245,
+          "optimizer_steps": 2,
+          "codec_steps": 0
+        }
+      ],
+      "evaluations": [
+        {
+          "ode_steps": 32,
+          "nfe": 64,
+          "solver": "heun",
+          "windows": 8,
+          "samples_per_window": 2,
+          "evaluation_seconds": 2.039053790998878,
+          "sampling_seconds": 1.0167464569967706,
+          "sampling_ms_per_window": 127.09330712459632,
+          "metrics": {
+            "energy_score": 32.7776985168457,
+            "min_ade": 6.98445987701416,
+            "min_fde": 6.357882499694824,
+            "sample_spread": 15.273381233215332,
+            "coverage_90": 0.2204241156578064,
+            "q_energy_score": 28.563552856445312,
+            "q_coverage_90": 0.12890625,
+            "tau_energy_score": 16.29839515686035,
+            "tau_coverage_90": 0.3119419813156128,
+            "contact_nll": 1.0782216787338257,
+            "contact_brier": 0.658907949924469,
+            "contact_macro_f1": 0.188608780503273,
+            "contact_onset_error_frames": 31.0,
+            "contact_entropy": 1.0824639797210693
+          }
+        },
+        {
+          "ode_steps": 16,
+          "nfe": 32,
+          "solver": "heun",
+          "windows": 8,
+          "samples_per_window": 2,
+          "evaluation_seconds": 1.034902126993984,
+          "sampling_seconds": 0.5158961399865802,
+          "sampling_ms_per_window": 64.48701749832253,
+          "metrics": {
+            "energy_score": 32.77766418457031,
+            "min_ade": 6.984454154968262,
+            "min_fde": 6.3578877449035645,
+            "sample_spread": 15.273370742797852,
+            "coverage_90": 0.2204241156578064,
+            "q_energy_score": 28.563518524169922,
+            "q_coverage_90": 0.12890625,
+            "tau_energy_score": 16.298385620117188,
+            "tau_coverage_90": 0.3119419813156128,
+            "contact_nll": 1.078222632408142,
+            "contact_brier": 0.6589086651802063,
+            "contact_macro_f1": 0.188608780503273,
+            "contact_onset_error_frames": 31.0,
+            "contact_entropy": 1.0824639797210693
+          }
+        },
+        {
+          "ode_steps": 8,
+          "nfe": 16,
+          "solver": "heun",
+          "windows": 8,
+          "samples_per_window": 2,
+          "evaluation_seconds": 0.5274617090180982,
+          "sampling_seconds": 0.2618186390027404,
+          "sampling_ms_per_window": 32.72732987534255,
+          "metrics": {
+            "energy_score": 32.777523040771484,
+            "min_ade": 6.984430313110352,
+            "min_fde": 6.357905387878418,
+            "sample_spread": 15.27332592010498,
+            "coverage_90": 0.2204241156578064,
+            "q_energy_score": 28.563358306884766,
+            "q_coverage_90": 0.12890625,
+            "tau_energy_score": 16.298355102539062,
+            "tau_coverage_90": 0.3119419813156128,
+            "contact_nll": 1.0782270431518555,
+            "contact_brier": 0.6589117050170898,
+            "contact_macro_f1": 0.188608780503273,
+            "contact_onset_error_frames": 31.0,
+            "contact_entropy": 1.0824640989303589
+          }
+        }
+      ],
+      "training_completed_at": "2026-10-04T23:58:25+08:00",
+      "checkpoint": "/tmp/xarm_wm_sweep_check_y5fy466n/contact_wm/checkpoints/latest.pt",
+      "checkpoint_sha256": "1eb3bed09d4dd2f814c753b2621211b659f9409d986d831e35a5d75f5f7a7c1a",
+      "evaluation_weights": "ema",
+      "error": "AttributeError: 'ContactSmoke' object has no attribute 'val_dataset'",
+      "validation_indices_sha256": "7c8eb68de72425f660f06a8dbbcc707d59c50086bf5b09fabe1b0c6ab5e1cedf",
+      "completed_at": "2026-10-04T23:59:00+08:00"
+    },
+    "latent_wm": {
+      "model": "latent_wm",
+      "status": "complete",
+      "source_config": "/tmp/xarm_wm_sweep_check_y5fy466n/latent_wm_source.yaml",
+      "config_sha256": "1b8c2ac7770f4371d46177885903a1410d7c35dba0fa18b16ac873c440a21f9e",
+      "optimizer_steps": 2,
+      "codec_steps": 2,
+      "training_validation_ode_steps": 16,
+      "training_attempts": [
+        {
+          "started_at": "2026-10-04T23:59:00+08:00",
+          "pid": 2747688,
+          "status": "complete",
+          "ended_at": "2026-10-04T23:59:04+08:00",
+          "seconds": 4.21031274998677,
+          "optimizer_steps": 2,
+          "codec_steps": 2
+        }
+      ],
+      "evaluations": [
+        {
+          "ode_steps": 32,
+          "nfe": 64,
+          "solver": "heun",
+          "windows": 8,
+          "samples_per_window": 2,
+          "evaluation_seconds": 1.307997969997814,
+          "sampling_seconds": 0.6614852150087245,
+          "sampling_ms_per_window": 82.68565187609056,
+          "metrics": {
+            "energy_score": 31.998371124267578,
+            "min_ade": 5.688643932342529,
+            "min_fde": 5.306726932525635,
+            "sample_spread": 0.45371612906455994,
+            "coverage_90": 0.00027901786961592734,
+            "q_energy_score": 29.854677200317383,
+            "q_coverage_90": 0.0,
+            "tau_energy_score": 11.244292259216309,
+            "tau_coverage_90": 0.0005580357392318547,
+            "contact_nll": 1.0245909690856934,
+            "contact_brier": 0.6174436807632446,
+            "contact_macro_f1": 0.32464930415153503,
+            "contact_onset_error_frames": 0.0,
+            "contact_entropy": 1.0954539775848389
+          }
+        },
+        {
+          "ode_steps": 16,
+          "nfe": 32,
+          "solver": "heun",
+          "windows": 8,
+          "samples_per_window": 2,
+          "evaluation_seconds": 0.6506438509968575,
+          "sampling_seconds": 0.3229368790052831,
+          "sampling_ms_per_window": 40.36710987566039,
+          "metrics": {
+            "energy_score": 31.99839210510254,
+            "min_ade": 5.688647747039795,
+            "min_fde": 5.306729316711426,
+            "sample_spread": 0.4537157416343689,
+            "coverage_90": 0.00027901786961592734,
+            "q_energy_score": 29.854692459106445,
+            "q_coverage_90": 0.0,
+            "tau_energy_score": 11.244304656982422,
+            "tau_coverage_90": 0.0005580357392318547,
+            "contact_nll": 1.0245909690856934,
+            "contact_brier": 0.6174437403678894,
+            "contact_macro_f1": 0.32464930415153503,
+            "contact_onset_error_frames": 0.0,
+            "contact_entropy": 1.0954538583755493
+          }
+        },
+        {
+          "ode_steps": 8,
+          "nfe": 16,
+          "solver": "heun",
+          "windows": 8,
+          "samples_per_window": 2,
+          "evaluation_seconds": 0.3346064180077519,
+          "sampling_seconds": 0.16429550500470214,
+          "sampling_ms_per_window": 20.536938125587767,
+          "metrics": {
+            "energy_score": 31.99846649169922,
+            "min_ade": 5.688661098480225,
+            "min_fde": 5.306740760803223,
+            "sample_spread": 0.45371392369270325,
+            "coverage_90": 0.00027901786961592734,
+            "q_energy_score": 29.854755401611328,
+            "q_coverage_90": 0.0,
+            "tau_energy_score": 11.24435043334961,
+            "tau_coverage_90": 0.0005580357392318547,
+            "contact_nll": 1.0245912075042725,
+            "contact_brier": 0.6174440979957581,
+            "contact_macro_f1": 0.32464930415153503,
+            "contact_onset_error_frames": 0.0,
+            "contact_entropy": 1.0954536199569702
+          }
+        }
+      ],
+      "training_completed_at": "2026-10-04T23:59:04+08:00",
+      "checkpoint": "/tmp/xarm_wm_sweep_check_y5fy466n/latent_wm/checkpoints/latest.pt",
+      "checkpoint_sha256": "9dcfa65deaaaa9ba35279e8037948e2d6e0034871d58d34a7833a696b266e77f",
+      "evaluation_weights": "ema",
+      "validation_indices_sha256": "7c8eb68de72425f660f06a8dbbcc707d59c50086bf5b09fabe1b0c6ab5e1cedf",
+      "completed_at": "2026-10-04T23:59:06+08:00"
+    }
+  }
+}

@@ -15,7 +15,9 @@ from nero_collection.config import SequenceCheckpointConfig
 from nero_collection.filters import CausalFilterPipeline
 from nero_collection.tau_ext_inference import SequenceTorquePredictor
 from nero_collection.time_utils import now_us
-from xarm_stack.momentum import PinocchioMomentumModel
+from xarm_stack.momentum import (
+    ExternalTorqueMomentumObserver, JointFrictionModel, PinocchioMomentumModel,
+)
 from xarm_stack.torque_visualization import DEFAULT_URDF, FirstOrderLowPass
 
 log = logging.getLogger(__name__)
@@ -164,6 +166,40 @@ def _mean_window(value):
     return int(value)
 
 
+def _state_filter_settings(config, acceleration_cutoff_hz=3.):
+    if config is None:
+        config = {}
+    if not isinstance(config, dict) or set(config) - {'q', 'dq', 'ddq'}:
+        raise ValueError('force_feedback.state_filters must contain only q, dq, ddq')
+    settings = {}
+    for key in ('q', 'dq', 'ddq'):
+        block = config.get(key, {})
+        if not isinstance(block, dict) or set(block) - {'enabled', 'cutoff_hz'}:
+            raise ValueError(f'force_feedback.state_filters.{key} supports enabled and cutoff_hz')
+        enabled = block.get('enabled', key == 'ddq')
+        if type(enabled) is not bool:
+            raise ValueError(f'force_feedback.state_filters.{key}.enabled must be a boolean')
+        cutoff = block.get('cutoff_hz', acceleration_cutoff_hz if key == 'ddq' else 3.)
+        validated = FirstOrderLowPass(cutoff, setting_name=f'state_filters.{key}.cutoff_hz')
+        settings[key] = {'enabled': enabled, 'cutoff_hz': (validated.rate / (2*np.pi)).tolist()}
+    return settings
+
+
+def _merge_dynamics_settings(settings, override):
+    """Keep global coefficients/cutoffs when a side overrides one nested field."""
+    merged = dict(settings)
+    merged.update(override)
+    for key in ('friction', 'state_filters'):
+        base, extra = settings.get(key), override.get(key)
+        if isinstance(base, dict) and isinstance(extra, dict):
+            merged[key] = {**base, **extra}
+            if key == 'state_filters':
+                for state_key in ('q', 'dq', 'ddq'):
+                    if isinstance(base.get(state_key), dict) and isinstance(extra.get(state_key), dict):
+                        merged[key][state_key] = {**base[state_key], **extra[state_key]}
+    return merged
+
+
 def _validated_payload(payload):
     """Validate tool settings without importing Pinocchio or talking to the robot."""
     if payload is None or (isinstance(payload, dict) and not payload):
@@ -191,17 +227,33 @@ def _validated_payload(payload):
 
 
 class URDFTorqueEstimator:
-    """Measured torque minus causal rigid-body RNEA, on distinct robot reports.
+    """Friction-compensated RNEA or momentum residual, on distinct reports.
 
-    The two low-pass filters use report time, matching the torque plot. The
-    acquisition time remains attached to the result for feedback expiry.
+    Optional input filters use report time. Acquisition time stays attached to
+    the result for feedback expiry. Momentum estimation never consumes ddq.
     """
     def __init__(self, model, *, measured_torque_cutoff_hz=3., acceleration_cutoff_hz=3.,
-                 tau_ext_mean_window=1, max_gap_s=.03, payload_provider=None):
+                 tau_ext_mean_window=1, max_gap_s=.03, payload_provider=None,
+                 dynamics_method='rnea', state_filters=None, measured_torque_filter_enabled=True,
+                 momentum_observer_bandwidth_hz=10., friction=None):
         self.model = model
+        if not isinstance(dynamics_method, str) or dynamics_method not in {'rnea', 'momentum'}:
+            raise ValueError('force_feedback.dynamics_method must be rnea or momentum')
+        if type(measured_torque_filter_enabled) is not bool:
+            raise ValueError('force_feedback.measured_torque_filter_enabled must be a boolean')
+        self.dynamics_method = dynamics_method
+        self.measured_torque_filter_enabled = measured_torque_filter_enabled
         self.measured_filter = FirstOrderLowPass(measured_torque_cutoff_hz, max_gap_s)
-        self.acceleration_filter = FirstOrderLowPass(acceleration_cutoff_hz, max_gap_s,
-                                                     setting_name='acceleration_cutoff_hz')
+        self.state_filter_settings = _state_filter_settings(state_filters, acceleration_cutoff_hz)
+        self.state_filters = {key: FirstOrderLowPass(settings['cutoff_hz'], max_gap_s,
+                             setting_name=f'state_filters.{key}.cutoff_hz')
+                              for key, settings in self.state_filter_settings.items()}
+        self.acceleration_filter = self.state_filters['ddq']  # Compatibility for existing diagnostics.
+        self.friction = (friction if isinstance(friction, JointFrictionModel) else
+                         JointFrictionModel.from_config(friction, getattr(model, 'urdf_path', None)))
+        self.momentum_observer = (ExternalTorqueMomentumObserver(model,
+            bandwidth_hz=momentum_observer_bandwidth_hz, max_gap_s=max_gap_s)
+            if dynamics_method == 'momentum' else None)
         self.mean_window = _mean_window(tau_ext_mean_window)
         self.max_gap_us = max_gap_s * 1e6
         self.payload_provider = payload_provider
@@ -209,7 +261,10 @@ class URDFTorqueEstimator:
 
     def reset(self):
         self.measured_filter.reset()
-        self.acceleration_filter.reset()
+        for state_filter in self.state_filters.values():
+            state_filter.reset()
+        if self.momentum_observer is not None:
+            self.momentum_observer.reset()
         self.residuals = deque(maxlen=self.mean_window)
         self.previous_timestamp_us = None
         self.latest = _empty_result()
@@ -225,12 +280,15 @@ class URDFTorqueEstimator:
     def update(self, timestamp_us, state, q_cmd=None, *, valid=True):
         source_us = int(getattr(state, 'acquired_timestamp_us', 0) or state.timestamp_us)
         report_us = int(state.timestamp_us)
-        q, dq, ddq, tau = (np.asarray(getattr(state, key), float)
-                           for key in ('q', 'dq', 'ddq', 'torque'))
+        q, dq, tau = (np.asarray(getattr(state, key), float) for key in ('q', 'dq', 'torque'))
         valid = (valid and state.q_valid and state.dq_valid and state.torque_valid
-                 and getattr(state, 'ddq_valid', state.dq_valid)
                  and all(value.shape == (7,) and np.isfinite(value).all()
-                         for value in (q, dq, ddq, tau)))
+                         for value in (q, dq, tau)))
+        ddq = None
+        if self.dynamics_method == 'rnea':
+            ddq = np.asarray(getattr(state, 'ddq', np.full(7, np.nan)), float)
+            valid = (valid and getattr(state, 'ddq_valid', state.dq_valid)
+                     and ddq.shape == (7,) and np.isfinite(ddq).all())
         if not valid:
             return self._release(source_us, timestamp_us, report_us=report_us)
         if self.previous_timestamp_us is not None:
@@ -248,12 +306,37 @@ class URDFTorqueEstimator:
                 return self._release(source_us, timestamp_us, report_us=report_us)
         self.previous_timestamp_us = report_us
         report_s = report_us / 1e6
-        measured = self.measured_filter.update(report_s, tau)
-        filtered_ddq = self.acceleration_filter.update(report_s, ddq)
-        prediction = np.asarray(self.model.rnea(q, dq, filtered_ddq), float)
+        measured = self.measured_filter.update(report_s, tau) if self.measured_torque_filter_enabled else tau.copy()
+        motion = {'q': q, 'dq': dq}
+        if ddq is not None:
+            motion['ddq'] = ddq
+        for key, value in motion.items():
+            if self.state_filter_settings[key]['enabled']:
+                motion[key] = self.state_filters[key].update(report_s, value)
+        friction_torque = self.friction.torque(motion['dq'])
+        if self.momentum_observer is not None:
+            residual = self.momentum_observer.update(report_s, motion['q'], motion['dq'],
+                                                     measured, friction_torque)
+            if not np.isfinite(residual).all():
+                if self.momentum_observer.timestamp_s is None:
+                    # Bad dynamics reset the observer; do not mix residuals
+                    # collected before failure with the recovered model.
+                    return self._release(source_us, timestamp_us, report_us=report_us)
+                # The observer needs a previous momentum sample. Keep its
+                # initialization rather than resetting on this expected warmup.
+                self.latest = _empty_result(source_us, timestamp_us)
+                return self.latest
+            # Preserve the measured-minus-baseline recording contract. This
+            # is a reconstructed baseline, not instantaneous inverse dynamics.
+            prediction = measured - residual
+        else:
+            prediction = np.asarray(self.model.rnea(motion['q'], motion['dq'], motion['ddq']), float)
+            if prediction.shape != (7,) or not np.isfinite(prediction).all():
+                raise ValueError('URDF RNEA must return a finite seven-joint torque vector')
+            prediction = prediction + friction_torque
+            residual = measured - prediction
         if prediction.shape != (7,) or not np.isfinite(prediction).all():
-            raise ValueError('URDF RNEA must return a finite seven-joint torque vector')
-        residual = measured - prediction
+            raise ValueError('URDF dynamics must return a finite seven-joint torque vector')
         self.residuals.append(residual.copy())
         ready = len(self.residuals) == self.mean_window
         feedback = np.mean(self.residuals, axis=0) if ready else np.full(7, np.nan)
@@ -270,7 +353,9 @@ class TauFreeFeedbackWorker:
                    'current_limit_raw', 'current_limit_percent', 'rate_limit_raw_s', 'sign', 'ramp_s', 'measured_tau_filter',
                    'maximum_age_s', 'maximum_sample_gap_s', 'sides', 'source', 'urdf_path',
                    'gravity_m_s2', 'payload', 'measured_torque_cutoff_hz',
-                   'acceleration_cutoff_hz', 'tau_ext_mean_window'}
+                   'acceleration_cutoff_hz', 'tau_ext_mean_window', 'dynamics_method',
+                   'state_filters', 'measured_torque_filter_enabled',
+                   'momentum_observer_bandwidth_hz', 'friction'}
         if not isinstance(block, dict) or set(block) - allowed:
             raise ValueError('force_feedback must be a mapping with supported fields')
         if type(block.get('enabled', False)) is not bool:
@@ -291,6 +376,7 @@ class TauFreeFeedbackWorker:
         self.settings = {}
         self.controllers = []
         self.estimators = []
+        self.friction_models = []
         self.predictor_factory = predictor_factory or SequenceTorquePredictor
         self.model_factory = model_factory or PinocchioMomentumModel
         self.payload_sources = {}
@@ -307,7 +393,7 @@ class TauFreeFeedbackWorker:
                 settings.pop('current_limit_raw', None)
             elif 'current_limit_raw' in override:
                 settings.pop('current_limit_percent', None)
-            settings.update(override)
+            settings = _merge_dynamics_settings(settings, override)
             source = settings.setdefault('source', 'checkpoint')
             if source not in {'checkpoint', 'urdf'}:
                 raise ValueError('force_feedback.source must be checkpoint or urdf')
@@ -335,7 +421,22 @@ class TauFreeFeedbackWorker:
                 for key in ('measured_torque_cutoff_hz', 'acceleration_cutoff_hz'):
                     settings.setdefault(key, 3.)
                     FirstOrderLowPass(settings[key], self.max_gap_s, setting_name=key)
+                method = settings.setdefault('dynamics_method', 'rnea')
+                if not isinstance(method, str) or method not in {'rnea', 'momentum'}:
+                    raise ValueError('force_feedback.dynamics_method must be rnea or momentum')
+                settings.setdefault('measured_torque_filter_enabled', True)
+                if type(settings['measured_torque_filter_enabled']) is not bool:
+                    raise ValueError('force_feedback.measured_torque_filter_enabled must be a boolean')
+                settings['state_filters'] = _state_filter_settings(settings.get('state_filters'),
+                                                                  settings['acceleration_cutoff_hz'])
+                settings['momentum_observer_bandwidth_hz'] = _vector(settings,
+                    'momentum_observer_bandwidth_hz', 10., positive=True).tolist()
+                friction_model = JointFrictionModel.from_config(settings.get('friction'), settings['urdf_path'])
+                settings['friction'] = friction_model.metadata()
                 settings['payload'] = _validated_payload(settings.get('payload'))
+            else:
+                friction_model = None
+            self.friction_models.append(friction_model)
             self.settings[arm] = settings
             self.controllers.append(ResidualCurrentFeedback(settings))
         self.queue = queue.Queue(maxsize=4)
@@ -363,6 +464,10 @@ class TauFreeFeedbackWorker:
                 estimators.append(URDFTorqueEstimator(model,
                     measured_torque_cutoff_hz=settings['measured_torque_cutoff_hz'],
                     acceleration_cutoff_hz=settings['acceleration_cutoff_hz'],
+                    measured_torque_filter_enabled=settings['measured_torque_filter_enabled'],
+                    state_filters=settings['state_filters'], dynamics_method=settings['dynamics_method'],
+                    momentum_observer_bandwidth_hz=settings['momentum_observer_bandwidth_hz'],
+                    friction=self.friction_models[len(estimators)],
                     tau_ext_mean_window=settings['tau_ext_mean_window'], max_gap_s=self.max_gap_s,
                     payload_provider=provider))
                 continue
@@ -468,20 +573,35 @@ class TauFreeFeedbackWorker:
 
     def metadata(self):
         input_filters, horizon = [], []
+        methods, definitions = {}, {}
         for arm, estimator in zip(self.arm_names, self.estimators):
             settings = self.settings[arm]
             if settings['source'] == 'urdf':
                 horizon.append(1)
-                input_filters.append({key: {'enabled': True, 'cutoff_hz': settings[setting]}
-                    for key, setting in [('tau', 'measured_torque_cutoff_hz'),
-                                         ('ddq', 'acceleration_cutoff_hz')]})
+                method = settings['dynamics_method']
+                methods[arm] = method
+                filters = {'tau': {'enabled': settings['measured_torque_filter_enabled'],
+                                  'cutoff_hz': settings['measured_torque_cutoff_hz'], 'used': True}}
+                for key, spec in settings['state_filters'].items():
+                    used = key != 'ddq' or method == 'rnea'
+                    filters[key] = {**spec, 'enabled': spec['enabled'] and used, 'used': used}
+                input_filters.append(filters)
+                definitions[arm] = (
+                    'tau_feedback_measured - momentum_observer_residual before moving mean '
+                    '(reconstructed baseline; not instantaneous RNEA)' if method == 'momentum' else
+                    'RNEA(configured q, dq, ddq) + configured friction torque')
             else:
                 horizon.append(estimator.predictor.metadata.horizon)
                 input_filters.append(dict(estimator.predictor.metadata.dataloader_filters))
         return {'enabled': self.enabled, 'settings': self.settings,
                 'source': self.source,
                 'sources': {arm: settings['source'] for arm, settings in self.settings.items()},
-                'urdf_residual_definition': 'lowpass(measured_tau) - RNEA(q, dq, lowpass(ddq))',
+                'dynamics_methods': methods,
+                'urdf_prediction_definitions': definitions,
+                'urdf_residual_definition': 'moving_mean(configured measured_tau - urdf baseline); '
+                    'RNEA baseline includes friction; momentum baseline is reconstructed from observer residual',
+                'momentum_residual_convention': 'same sign as measured_tau - RNEA - friction',
+                'momentum_has_finite_bandwidth': True,
                 'tau_ext_mean_window': {arm: settings['tau_ext_mean_window']
                                         for arm, settings in self.settings.items()},
                 'urdf_mean_requires_full_window': True,

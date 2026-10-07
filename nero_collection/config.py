@@ -163,6 +163,20 @@ class CameraConfig:
     # the cropped/native resolution even when output_size downsamples policy input.
     preview_output_size: tuple[int, int] | None = None
     extra: dict[str, Any] = field(default_factory=dict)
+    # Native acquisition uses fps; output_fps selects a subset for recording/inference.
+    output_fps: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.output_fps is not None:
+            if (isinstance(self.output_fps, bool) or not isfinite(float(self.output_fps))
+                    or float(self.output_fps) <= 0 or not isfinite(float(self.fps))
+                    or float(self.output_fps) > float(self.fps)):
+                raise ValueError("camera.output_fps must be positive, finite and no greater than fps")
+            object.__setattr__(self, "output_fps", float(self.output_fps))
+
+    @property
+    def effective_fps(self) -> float:
+        return float(self.fps if self.output_fps is None else self.output_fps)
 
 
 @dataclass(frozen=True)
@@ -583,6 +597,7 @@ def _parse_camera(data: dict[str, Any]) -> CameraConfig:
         "width",
         "height",
         "fps",
+        "output_fps",
         "exposure",
         "exposure_dynamic_framerate",
         "depth",
@@ -617,6 +632,11 @@ def _parse_camera(data: dict[str, Any]) -> CameraConfig:
     width = int(data.get("width", 640))
     height = int(data.get("height", 480))
     fps = float(data.get("fps", 30.0))
+    output_fps = data.get("output_fps")
+    if output_fps is not None:
+        if isinstance(output_fps, bool):
+            raise ValueError("camera.output_fps must be a positive number")
+        output_fps = float(output_fps)
     buffer_size = int(data.get("buffer_size", 1))
     startup_timeout_s = float(data.get("startup_timeout_s", 3.0))
     warmup_s = float(data.get("warmup_s", 0.0))
@@ -674,6 +694,7 @@ def _parse_camera(data: dict[str, Any]) -> CameraConfig:
         width=width,
         height=height,
         fps=fps,
+        output_fps=output_fps,
         exposure=data.get("exposure"),
         exposure_dynamic_framerate=exposure_dynamic_framerate,
         depth=bool(data.get("depth", False)),

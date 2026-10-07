@@ -1,0 +1,339 @@
+{
+  "policy": "drop",
+  "original_windows": 97319,
+  "retained_windows": 97213,
+  "invalid_windows": 106,
+  "episodes": [
+    {
+      "episode_start": 0,
+      "windows": 1524,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 1756,
+      "windows": 1858,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 3846,
+      "windows": 1658,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 5737,
+      "windows": 1990,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 7959,
+      "windows": 1780,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 9971,
+      "windows": 1715,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 11918,
+      "windows": 1650,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 13800,
+      "windows": 1792,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 15825,
+      "windows": 1681,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 17739,
+      "windows": 1571,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 19543,
+      "windows": 1782,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 21556,
+      "windows": 1545,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 23334,
+      "windows": 1747,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 25312,
+      "windows": 1485,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 27030,
+      "windows": 1535,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 28797,
+      "windows": 1601,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 30630,
+      "windows": 1664,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 32526,
+      "windows": 1641,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 34398,
+      "windows": 1414,
+      "invalid_windows": 106
+    },
+    {
+      "episode_start": 36043,
+      "windows": 1388,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 37663,
+      "windows": 1165,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 39060,
+      "windows": 1342,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 40634,
+      "windows": 1298,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 42164,
+      "windows": 1268,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 43664,
+      "windows": 1439,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 45335,
+      "windows": 1360,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 46927,
+      "windows": 1156,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 48315,
+      "windows": 1281,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 49827,
+      "windows": 1569,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 51628,
+      "windows": 1299,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 53160,
+      "windows": 1310,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 54703,
+      "windows": 1322,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 56258,
+      "windows": 1284,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 57775,
+      "windows": 1323,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 59329,
+      "windows": 1142,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 60704,
+      "windows": 1183,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 62118,
+      "windows": 1332,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 63681,
+      "windows": 1301,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 65214,
+      "windows": 1180,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 66625,
+      "windows": 1428,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 68285,
+      "windows": 1147,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 69663,
+      "windows": 1774,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 71669,
+      "windows": 1890,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 73791,
+      "windows": 1713,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 75735,
+      "windows": 1674,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 77642,
+      "windows": 1729,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 79604,
+      "windows": 1468,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 81304,
+      "windows": 1546,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 83082,
+      "windows": 1700,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 85014,
+      "windows": 1553,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 86799,
+      "windows": 1616,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 88647,
+      "windows": 1817,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 90696,
+      "windows": 1485,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 92412,
+      "windows": 1731,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 94375,
+      "windows": 1883,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 96489,
+      "windows": 1782,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 98502,
+      "windows": 1847,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 100582,
+      "windows": 1658,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 102472,
+      "windows": 1797,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 104501,
+      "windows": 1694,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 106427,
+      "windows": 1599,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 108258,
+      "windows": 1672,
+      "invalid_windows": 0
+    },
+    {
+      "episode_start": 110162,
+      "windows": 1541,
+      "invalid_windows": 0
+    }
+  ],
+  "contract": {
+    "schema": "relative_grid_v1",
+    "state_rate_hz": 100.0,
+    "action_rate_hz": 25.0,
+    "action_interval_tolerance_ns": 4000000,
+    "state_interval_tolerance_ns": 4000000,
+    "action_drift_tolerance_ns": 5000000,
+    "tick_ns": 10000000,
+    "action_ticks": 4,
+    "origin": "request_history_last_observation",
+    "rounding": "nearest_ties_away_from_zero_int64",
+    "fallback": "quantize_first_anchor_then_nominal_cadence",
+    "explicit": "per_token_grid_positions_minus_request_anchor_grid",
+    "state_stride": "retain_external_ticks",
+    "phase_clamping": false
+  }
+}

@@ -479,6 +479,7 @@ class _LatestWorker:
         self._name = name
         self._condition = threading.Condition()
         self._stop_event = threading.Event()
+        self._lifecycle_lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._fault: BaseException | None = None
 
@@ -492,30 +493,46 @@ class _LatestWorker:
             return self._fault
 
     def start(self) -> None:
-        if self.running:
-            return
-        self._stop_event.clear()
-        with self._condition:
-            self._fault = None
-        self._thread = threading.Thread(target=self._run_guarded, name=self._name, daemon=True)
-        self._thread.start()
+        with self._lifecycle_lock:
+            with self._condition:
+                if self.running:
+                    if self._stop_event.is_set():
+                        raise RuntimeError(f"Worker {self._name} is still stopping; cannot restart")
+                    return
+                self._stop_event.clear()
+                self._fault = None
+                self._thread = threading.Thread(target=self._run_guarded, name=self._name, daemon=True)
+                self._thread.start()
 
-    def stop(self) -> None:
-        self._stop_event.set()
-        with self._condition:
-            self._condition.notify_all()
-        thread = self._thread
-        if thread is not None and thread.is_alive():
-            thread.join(timeout=2.0)
-        self._thread = None
+    def stop(self, timeout_s: float = 2.0) -> None:
+        timeout_s = float(timeout_s)
+        if not np.isfinite(timeout_s) or timeout_s < 0.0:
+            raise ValueError("Worker stop timeout must be finite and non-negative")
+        with self._lifecycle_lock:
+            with self._condition:
+                self._stop_event.set()
+                self._clear_pending()
+                self._condition.notify_all()
+            thread = self._thread
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=timeout_s)
+                if thread.is_alive():
+                    # Retain the reference and stop event: another start must
+                    # never revive this run or concurrently reuse its model.
+                    raise TimeoutError(f"Timed out stopping worker {self._name}")
+            self._thread = None
+
+    def _clear_pending(self) -> None:
+        pass
 
     def _run_guarded(self) -> None:
         try:
             self._run()
         except BaseException as exc:
             with self._condition:
-                self._fault = exc
-                self._condition.notify_all()
+                if not self._stop_event.is_set():
+                    self._fault = exc
+                    self._condition.notify_all()
 
     def _run(self) -> None:  # pragma: no cover - abstract worker hook
         raise NotImplementedError
@@ -552,11 +569,17 @@ class DPWorker(_LatestWorker):
 
     def submit(self, observation: Any, *, timestamp_s: float | None = None) -> None:
         timestamp = monotonic_time() if timestamp_s is None else float(timestamp_s)
-        with self._pending_lock:
-            self._pending = observation
-            self._pending_time_s = timestamp
         with self._condition:
+            if self._stop_event.is_set():
+                return
+            with self._pending_lock:
+                self._pending = observation
+                self._pending_time_s = timestamp
             self._condition.notify_all()
+
+    def _clear_pending(self) -> None:
+        with self._pending_lock:
+            self._pending = self._pending_time_s = None
 
     @staticmethod
     def _extract_action(result: Any) -> np.ndarray:
@@ -592,8 +615,12 @@ class DPWorker(_LatestWorker):
                 with self._condition:
                     self._condition.wait(timeout=0.002)
                 continue
+            if self._stop_event.is_set():
+                break
             started = monotonic_time()
             result = self.infer_fn(observation)
+            if self._stop_event.is_set():
+                break
             returned = monotonic_time()
             values = self._extract_action(result)
             start_time = returned if self.result_start_time_fn is None else float(
@@ -601,12 +628,20 @@ class DPWorker(_LatestWorker):
             )
             if not np.isfinite(start_time) or start_time < 0.0:
                 raise ValueError("DP action_start_time must be finite and non-negative")
-            plan = self.action_buffer.append(
-                values,
-                start_time_s=start_time,
-                step_s=self.step_s,
-            )
-            self._updates += 1
+            with self._condition:
+                if self._stop_event.is_set():
+                    break
+                plan = self.action_buffer.append(
+                    values,
+                    start_time_s=start_time,
+                    step_s=self.step_s,
+                )
+                self._updates += 1
+            # Callbacks may wait for a WM prediction. Do not hold the stop
+            # gate while waiting; strict stop retains this thread on timeout
+            # and joins it before an episode can reset or restart its model.
+            if self._stop_event.is_set():
+                break
             if self.on_publish is not None:
                 self.on_publish(plan)
 
@@ -660,13 +695,19 @@ class WMWorker(_LatestWorker):
         timestamp = monotonic_time() if t_start is None else float(t_start)
         if not np.isfinite(timestamp):
             raise ValueError("WM request timestamp must be finite")
-        with self._request_lock:
-            if self._requested:
-                return False
-            self._requested.append(timestamp)
         with self._condition:
+            if self._stop_event.is_set():
+                return False
+            with self._request_lock:
+                if self._requested:
+                    return False
+                self._requested.append(timestamp)
             self._condition.notify_all()
         return True
+
+    def _clear_pending(self) -> None:
+        with self._request_lock:
+            self._requested.clear()
 
     @staticmethod
     def _extract_prediction(result: Any) -> tuple[np.ndarray, np.ndarray]:
@@ -723,8 +764,12 @@ class WMWorker(_LatestWorker):
             )
             if history is None or action is None:
                 continue
+            if self._stop_event.is_set():
+                break
             started = monotonic_time()
             result = self.infer_fn(history, action)
+            if self._stop_event.is_set():
+                break
             returned = monotonic_time()
             q_values, tau_values = self._extract_prediction(result)
             if q_values.shape[0] != self.prediction_horizon or tau_values.shape[0] != self.prediction_horizon:
@@ -738,17 +783,20 @@ class WMWorker(_LatestWorker):
                 self.prediction_dt_s,
                 self.prediction_horizon,
             )
-            if first_valid_idx < self.prediction_horizon:
-                timestamps = t_start + (
-                    np.arange(first_valid_idx, self.prediction_horizon, dtype=np.float64) + 1.0
-                ) * self.prediction_dt_s
-                self.target_buffer.append(
-                    timestamps,
-                    q_values[first_valid_idx:],
-                    tau_values[first_valid_idx:],
-                )
-            self._last_latency_s = returned - started
-            self._inference_count += 1
+            with self._condition:
+                if self._stop_event.is_set():
+                    break
+                if first_valid_idx < self.prediction_horizon:
+                    timestamps = t_start + (
+                        np.arange(first_valid_idx, self.prediction_horizon, dtype=np.float64) + 1.0
+                    ) * self.prediction_dt_s
+                    self.target_buffer.append(
+                        timestamps,
+                        q_values[first_valid_idx:],
+                        tau_values[first_valid_idx:],
+                    )
+                self._last_latency_s = returned - started
+                self._inference_count += 1
 
 
 class ControlWorker(_LatestWorker):
@@ -884,10 +932,16 @@ class TimestampFastSlowRuntime:
         self.control_worker.start()
 
     def stop(self) -> None:
-        self.control_worker.stop()
-        if self.wm_worker is not None:
-            self.wm_worker.stop()
-        self.dp_worker.stop()
+        first_error = None
+        for worker in (self.control_worker, self.wm_worker, self.dp_worker):
+            if worker is None:
+                continue
+            try:
+                worker.stop()
+            except BaseException as exc:
+                first_error = first_error or exc
+        if first_error is not None:
+            raise first_error
 
     def reset(self) -> None:
         self.stop()

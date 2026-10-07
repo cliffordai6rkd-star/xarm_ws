@@ -1,0 +1,24 @@
+{
+  "model": {
+    "name": "residual_bilstm_mixed_zero5_50",
+    "arch": "bilstm",
+    "filter": "zero5",
+    "rate": 50,
+    "horizon": 51,
+    "mixed": true
+  },
+  "source_sha256": {
+    "/home/eid/code/PINN_LCP/outputs/xarm_tau_offline_20261004/residual/residual_bilstm_mixed_zero5_50.pt": "032fcb1bd6299b7a54172a3b749c9f5e5cbbe5d6be3341b978abe32361b9f6f9",
+    "/home/eid/code/PINN_LCP/outputs/xarm_tau_offline_20261004/physics/identified_dynamics_right_zero5.npz": "00684a957ff6062fa1be1c02d115fa1424d9c3d5eada607ab109d83f7c631e0e",
+    "/home/eid/code/xarm_ws/gello_teleop/models/xarm7_dynamics.urdf": "2272e49a41f25e67e949b57425db47c298eafbe579518ef2953ca068e682a652"
+  },
+  "artifact_sha256": "3158f7644b9ee90c7761ff06a02c1a75eacb2b3e41f49a37fc235b83362eca48",
+  "purpose": "Delayed visualization and offline contact review; right-arm validation",
+  "filter": "4th-order 5 Hz Butterworth sosfiltfilt, then resample_poly 100 -> 50 Hz",
+  "inputs": [
+    "q",
+    "dq",
+    "q_cmd - q"
+  ],
+  "target": "tau - identified dynamics/friction prior"
+}

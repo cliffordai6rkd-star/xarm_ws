@@ -11,13 +11,20 @@ import numpy as np
 
 from inference.core.contracts import ActionChunk
 from inference.policies.dp.policy import DiffusionPolicy
+from inference.policies.errors import JointActionContractError
 
 
 class ACTPolicy:
     def __init__(self, model: Any, config: Mapping, stats: Mapping, *,
-                 image_shapes: Mapping, device="cpu", step_s=None, action_steps=None):
+                 image_shapes: Mapping, device="cpu", step_s=None, action_steps=None,
+                 brightness_jitter=0., brightness_seed=None):
         self.model, self.device = model, device
         self.config = dict(config)
+        self.brightness_jitter = float(brightness_jitter)
+        if not np.isfinite(self.brightness_jitter) or not 0 <= self.brightness_jitter <= 1:
+            raise ValueError("ACT brightness_jitter must be finite and between 0 and 1")
+        self.brightness_seed = brightness_seed
+        self._brightness_rng = np.random.default_rng(brightness_seed)
         self.image_keys = tuple(config["camera_names"])  # Training order matters.
         self.image_shapes = {key: tuple(image_shapes[key]) for key in self.image_keys}
         self.state_dim = int(config["state_dim"])
@@ -32,9 +39,14 @@ class ACTPolicy:
             raise ValueError("ACT action_steps must be between 1 and num_queries")
         # A quaternion-normalized training target cannot be recovered as joint q.
         if config.get("quaternion_indices"):
-            raise ValueError("ACT checkpoint quaternion_indices is set: this checkpoint "
-                             "is incompatible with joint q execution. Train with action.joint "
-                             "and without --quaternion_indices; do not edit the saved config.")
+            raise JointActionContractError(
+                "ACT checkpoint 的 quaternion_indices="
+                f"{config['quaternion_indices']} 把关节训练目标按四元数归一化，"
+                "不能直接作为七轴 q 执行。请在项目根目录运行 "
+                "bash scripts/train_act_joint.sh 5000，以 action.joint 且不带 "
+                "--quaternion_indices 重新训练；然后通过 --checkpoint "
+                "../act/outputs/erase_board_joint/policy_last.ckpt 使用新权重。"
+                "不要仅修改旧 checkpoint 的配置。")
         action_key = str(config.get("action_key", "action.joint")).lower()
         if config.get("action_semantic", "joint") != "joint" or any(
                 word in action_key for word in ("pose", "torque", "delta")):
@@ -55,7 +67,8 @@ class ACTPolicy:
     @classmethod
     def from_checkpoint(cls, checkpoint_path, *, image_shapes, device="cpu",
                         source_path=None, config_path=None, stats_path=None,
-                        step_s=None, action_steps=None):
+                        step_s=None, action_steps=None,
+                        brightness_jitter=0., brightness_seed=None):
         import torch
 
         checkpoint = Path(checkpoint_path).expanduser().resolve()
@@ -67,7 +80,8 @@ class ACTPolicy:
             stats = pickle.load(handle)
         # Validate semantics and normalization before importing/building the model.
         policy = cls(None, config, stats, image_shapes=image_shapes, device=device,
-                     step_s=step_s, action_steps=action_steps)
+                     step_s=step_s, action_steps=action_steps,
+                     brightness_jitter=brightness_jitter, brightness_seed=brightness_seed)
         source = Path(source_path or Path(__file__).resolve().parents[2].parent / "act").resolve()
         if not (source / "detr" / "main.py").is_file():
             raise FileNotFoundError(f"ACT source not found: {source}; set policy.source_path")
@@ -114,6 +128,12 @@ class ACTPolicy:
         preparer._image_shapes = self.image_shapes
         images = np.stack([preparer._prepare_image(observation.images[key], key)
                            for key in self.image_keys])
+        brightness_factor = 1.
+        if self.brightness_jitter:
+            # Perturb RGB in [0,1] before normalization, sharing lighting across views.
+            brightness_factor = float(self._brightness_rng.uniform(
+                1 - self.brightness_jitter, 1 + self.brightness_jitter))
+            images = np.clip(images * np.float32(brightness_factor), 0., 1.)
         images = (images - np.array([.485, .456, .406], np.float32)[None, :, None, None])
         images /= np.array([.229, .224, .225], np.float32)[None, :, None, None]
         if self.config.get("image_only", False):
@@ -132,7 +152,7 @@ class ACTPolicy:
             raise ValueError(f"ACT returned unexpected action shape {values.shape}")
         values = values[0, :self.action_steps] * self.stats["action_std"] + self.stats["action_mean"]
         return ActionChunk(values, "joint", None, observation.timestamp_us, self.step_s,
-                           {"policy": "act"})
+                           {"policy": "act", "brightness_factor": brightness_factor})
 
 
 __all__ = ["ACTPolicy"]

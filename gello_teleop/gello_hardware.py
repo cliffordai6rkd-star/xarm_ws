@@ -42,6 +42,9 @@ _CURRENT_TABLE = {
 # XL330 control-table maximum Current Limit, raw units (1 mA/unit).
 XL330_MAX_CURRENT_RAW = 1750
 _ALIGNMENT_MAX_CURRENT = {1190: XL330_MAX_CURRENT_RAW, 1200: XL330_MAX_CURRENT_RAW}
+_MODEL_PING_ATTEMPTS = 3
+_MODEL_PING_RETRY_CODES = {-3001, -3002}  # Receive timeout or corrupt/incomplete packet.
+_MODEL_PING_RETRY_DELAY_S = .01
 
 
 def check(code, operation):
@@ -146,7 +149,11 @@ class GelloReader:
             raise
 
     def detect_capabilities(self):
-        """Return model-gated capabilities without changing servo state."""
+        """Identify models without writes; retry only transient receive failures.
+
+        A failed fresh check never falls back to previously identified models.
+        Keep communication/device errors distinct from an unsupported model.
+        """
         with self.lock:
             if self.closed:
                 raise RuntimeError('GELLO port is closed')
@@ -154,24 +161,41 @@ class GelloReader:
             for motor_id in self.config.joint_ids:
                 model = None
                 try:
-                    value = self.packet.ping(self.port, motor_id)
-                    if isinstance(value, tuple):
-                        # Dynamixel SDK returns (model_number, comm_result,
-                        # packet_error), but accept wrappers that return just
-                        # the model number.
-                        if len(value) >= 3:
-                            model, comm, error = value[:3]
-                            check(comm, f'Dynamixel {motor_id} ping')
-                            check(error, f'Dynamixel {motor_id} ping device error')
-                        elif value:
-                            model = value[0]
-                    else:
-                        model = value
+                    for attempt in range(_MODEL_PING_ATTEMPTS):
+                        value = self._serial_call(self.packet.ping, self.port, motor_id,
+                                                  operation=f'识别型号 ID={motor_id}')
+                        if isinstance(value, tuple):
+                            # SDK: (model_number, comm_result, packet_error).
+                            # Also accept wrappers returning only the model.
+                            if len(value) >= 3:
+                                model, comm, error = value[:3]
+                                if (comm in _MODEL_PING_RETRY_CODES and not error
+                                        and attempt + 1 < _MODEL_PING_ATTEMPTS):
+                                    time.sleep(_MODEL_PING_RETRY_DELAY_S)
+                                    continue
+                                check(comm, f'Dynamixel {motor_id} ping '
+                                      f'(attempt {attempt + 1}/{_MODEL_PING_ATTEMPTS})')
+                                check(error, f'Dynamixel {motor_id} ping device error')
+                            elif len(value) == 1:
+                                model = value[0]
+                            else:
+                                raise ValueError('Dynamixel ping must return a model number '
+                                                 'or (model_number, comm_result, packet_error)')
+                        else:
+                            model = value
+                        if (isinstance(model, (bool, np.bool_))
+                                or not isinstance(model, (int, np.integer))
+                                or not 0 < model <= 65535):
+                            raise ValueError(f'Invalid Dynamixel model number: {model!r}')
+                        model = int(model)
+                        break
                 except Exception as exc:
+                    self.model_numbers[motor_id] = None
+                    port = getattr(self.config, 'port', 'unknown')
                     result[motor_id] = {'model_number': None, 'model_name': None,
-                                        'current_control': False, 'error': str(exc)}
+                                        'current_control': False,
+                                        'error': f'{exc} (port={port}, ID={motor_id})'}
                     continue
-                model = int(model) if model is not None else None
                 self.model_numbers[motor_id] = model
                 result[motor_id] = {
                     'model_number': model,
@@ -179,6 +203,14 @@ class GelloReader:
                     'current_control': model in _KNOWN_CURRENT_MODELS,
                 }
             return result
+
+    def _check_model_identification(self, capabilities):
+        failures = [f'ID {motor_id}: {info["error"]}'
+                    for motor_id, info in capabilities.items() if info.get('error')]
+        if failures:
+            port = getattr(self.config, 'port', 'unknown')
+            raise RuntimeError(f'GELLO model identification failed on port {port}; '
+                               + '; '.join(failures))
 
     def enable_current_damping(self, config):
         """Switch configured joints to model-supported current control.
@@ -190,9 +222,12 @@ class GelloReader:
         if str(getattr(config, 'damping_mode', 'none')).lower() != 'current':
             return {'enabled': False, 'reason': 'damping_mode_is_not_current'}
         capabilities = self.detect_capabilities()
+        self._check_model_identification(capabilities)
         unsupported = [i for i, value in capabilities.items() if not value.get('current_control')]
         if unsupported:
+            models = {i: capabilities[i].get('model_number') for i in unsupported}
             raise RuntimeError(f'GELLO current damping unsupported for motor IDs {unsupported}; '
+                               f'port={getattr(self.config, "port", "unknown")}, model_numbers={models}; '
                                'configure the exact Dynamixel model/control table first')
         n = len(self.config.joint_ids)
         gains = np.asarray(getattr(config, 'damping_gain', None), dtype=float)
@@ -255,10 +290,13 @@ class GelloReader:
         if type(goal_current) is not int or goal_current <= 0:
             raise ValueError('alignment Goal Current must be a positive integer')
         capabilities = self.detect_capabilities()
+        self._check_model_identification(capabilities)
         unsupported = [i for i, info in capabilities.items()
                        if info.get('model_number') not in _ALIGNMENT_MAX_CURRENT]
         if unsupported:
-            raise ValueError(f'Alignment hold has no verified maximum current for IDs {unsupported}')
+            models = {i: capabilities[i].get('model_number') for i in unsupported}
+            raise ValueError(f'Alignment hold has no verified maximum current for IDs {unsupported}; '
+                             f'port={getattr(self.config, "port", "unknown")}, model_numbers={models}')
         if any(goal_current > _ALIGNMENT_MAX_CURRENT[info['model_number']] for info in capabilities.values()):
             raise ValueError('Alignment current exceeds model maximum')
         limits = {i: _ALIGNMENT_MAX_CURRENT[info['model_number']] for i, info in capabilities.items()}

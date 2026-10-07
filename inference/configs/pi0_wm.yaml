@@ -30,7 +30,7 @@ wm:
   use_ema: true
   num_samples: 1
   selected_sample: 0
-  flow_steps: 32
+  flow_steps: 64
   solver: heun
 control:
   hz: 100

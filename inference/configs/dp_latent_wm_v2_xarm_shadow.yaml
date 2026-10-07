@@ -1,0 +1,96 @@
+# DP -> latent WM v2 read-only shadow inference.
+pipeline: dp_latent_wm
+execution:
+  reset_on_start: false
+  # Initial/reset pose: joint1..joint7 in radians; also used when pressing i.
+  # Requires --enable-command to move. Omit a side to use hardware reset_q.
+  initial_q:
+    right: [0.0, 0.0, 0.0, 1.570796, 0.0, 1.570796, -1.570796]
+policy:
+  type: dp
+  source_path: ../../../diffusion_policy
+  checkpoint: ../../model/dp/peel_cucumber/checkpoints-20261005T042624Z-1-001/checkpoints/latest.ckpt
+  device: cuda:0
+  num_inference_steps: 8
+  torch_threads: 1
+  refresh_steps: 8  # 8 x 40 ms = 320 ms.
+  wait_for_window_exhaustion: true  # Submit the next fresh observation after this window ends.
+  # 25 Hz, current + 14 future actions from action_pred[:,1:16]; WM selects 8 by timestamp.
+wm:
+  pinn_root: ../../../PINN_LCP
+  checkpoint: ../../model/wm/latent_wm_v2/nero_pretrain_xarm_sft/xarm_peel_cucumber/checkpoints/step_00050000.pt
+  model_version: latent_carswm_lstm_v2
+  # Seven-axis model with official G2 geometry/inertia, frozen closed at 0.85 rad.
+  urdf_path: ../../gello_teleop/models/xarm7_dynamics_g2.urdf
+  training_urdf_path: ../../gello_teleop/models/xarm7_dynamics.urdf  # Checkpoint path is stale on this host; verify the trained FK chain.
+  device: cuda:0
+  # Keep trained/default sampling until accelerated variants are evaluated.
+  precision: float16
+  cuda_graph: true  # Replay unchanged sampling on CUDA; CPU uses eager sampling.
+  flow_steps: 32
+  solver: heun
+  num_samples: 1
+  execute_steps: 4  # WM update period: 40 ms (25 Hz), within the 100 ms forecast age limit.
+  initial_latency_ms: 52.0
+  margin_ms: 3.0
+observation:
+  hardware_config: ../../gello_teleop/config/xarm7_gello_dual_dataset.yaml
+  arm: right
+  camera_map: {front: front, left_wrist: left_wrist, right_wrist: right_wrist}
+  visualize: true
+  maximum_age_ms: 150.0
+  maximum_camera_skew_ms: 60.0
+  maximum_pair_skew_ms: 10.0
+  # SDK get_servo_angle(is_real=False) controller reference, not last_used_angles.
+  # Not yet validated as equivalent to the training collector's host q_cmd.
+  # Alternative external_file: atomic JSON {timestamp_us: int, q_cmd: [7 radians]}.
+  command_source: controller_reference
+  command_file: /tmp/xarm_right_command.json
+logging:
+  output_dir: ../../runs/dp_latent_wm_v2_shadow
+  record_controller: true  # false disables per-reference records; computation still runs.
+controller:
+  enabled: true
+  mode: mit_position  # Fourth mode: host MIT torque -> dynamics -> delta q -> limited position.
+  execution: shadow
+  gap_hold: {enabled: true, maximum_ms: 200.0}  # Brake toward the last command during the 320 ms DP gap.
+  horizon_steps: 2
+  dt: 0.01  # physical step, separate from WM flow_steps and execute_steps
+  sample_id: 0
+  mit:
+    reference_source: wm_q
+    velocity_source: zero  # Track each timestamped WM position; damp measured velocity instead of differentiating noisy predictions.
+    feedforward_source: nominal_wm_blend  # Nominal support torque plus a bounded WM correction.
+    wm_tau_weight: 0.05  # After residual limiting, WM contributes at most 0.025 rad/s^2.
+    nominal_acceleration_source: zero  # Avoid integrating noisy second differences of WM positions.
+    wm_residual_acceleration_limit_rad_s2: 0.5
+    feedback_space: acceleration  # tau_feedback = M(q) @ (kp*position_error - kd*measured_velocity).
+    integration_base: previous_command  # Continuous sent-command trajectory; feedback remains measured.
+    kp: 8.0  # 1/s^2 in acceleration space; converted to torque by the full mass matrix.
+    kd: 6.0  # 1/s in acceleration space; initial outer position-tracking damping.
+  maximum_state_age_ms: 10.0
+  maximum_forecast_age_ms: 100.0
+  maximum_compute_ms: 2.0  # measured budget; late results are invalid, not queued
+  # WM torque labels have a causal one-pole 20 Hz filter; reconstruct an
+  # equivalent interval torque reference before using instantaneous dynamics.
+  torque_reference: causal_inverse  # raw only for unfiltered torque references
+  tau_filter_cutoff_hz: 20.0
+  dynamics:
+    gravity_m_s2: [0.0, 0.0, -9.81]
+    b_mode: zero  # explicit rigid-body baseline; no friction/contact compensation
+  weights:
+    # Experimental shadow scales, not calibrated real-machine controller gains.
+    eps_q: 0.01  # rad
+    eps_tau: 1.0  # Nm
+    rho: 1.0
+    sigma_model: 0.0  # Nm; no validated model error estimate yet
+    smooth_weight: 0.0
+    previous_weight: 0.0
+    eps_acceleration: 4.0  # rad/s^2, normalization for continuity penalties
+  # Local reference limits; do not change the shared teleoperation settings.
+  limits:
+    max_velocity_rad_s: 0.5
+    max_acceleration_rad_s2: 1.0
+    max_jerk_rad_s3: 5.0  # At 100 Hz, acceleration changes by at most 0.05 rad/s^2.
+    max_step_rad: 0.01
+    max_tracking_error_rad: 0.1

@@ -1,0 +1,13 @@
+{
+  "policy": "contact_wm_learned_index",
+  "original_windows": 217062,
+  "retained_windows": 217062,
+  "invalid_windows": 0,
+  "episodes": [],
+  "contract": {
+    "position_encoding": "contact_wm_learned_index",
+    "state_rate_hz": 100,
+    "action_rate_hz": 25.0,
+    "timestamp_selection": "native_contact_wm"
+  }
+}
