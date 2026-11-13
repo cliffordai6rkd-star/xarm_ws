@@ -1,0 +1,38 @@
+{
+  "config": {
+    "version": 1,
+    "fps": 25.0,
+    "cutoff_hz": 3.0,
+    "contact_threshold_l1": 14.0,
+    "convention": "tool-on-environment",
+    "compensation": "dynamics",
+    "ee_frame": "link_eef",
+    "gravity": [
+      0.0,
+      0.0,
+      -9.81
+    ],
+    "payload_mass": 0.79,
+    "payload_com": [
+      0.0,
+      0.0,
+      0.05
+    ],
+    "payload_inertia": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "torque_bias": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "filter_mode": "causal",
+  "urdf_sha256": "2272e49a41f25e67e949b57425db47c298eafbe579518ef2953ca068e682a652"
+}

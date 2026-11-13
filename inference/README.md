@@ -1,5 +1,13 @@
 # xArm / Nero 模型推理
 
+ForceVLA 远端推理入口：[`scripts/run_forcevla.py`](../scripts/run_forcevla.py)，
+本地 xArm `q/dq/tau` 按训练数据的 25 Hz 因果滤波、RNEA 残差、均值和 L1 门限得到
+`tau_ext`，与 RGB 图像通过 Tailscale 发送给现有 server；本地位置控制独立以 100 Hz 运行。
+配置中的 `tau_ext.processing_record` 必须选择 checkpoint 对应的训练记录：
+`*_clean` 为 14 Nm/1 帧，`*_clean_ma5_l1_12p5` 为 12.5 Nm/5 帧，均使用训练时固定的
+0.79 kg、质心 `[0, 0, 0.05] m` 负载。
+配置、启动方法和远端版本兼容性见 [ForceVLA 部署说明](README_FORCEVLA.md)。
+
 ## xArm：Diffusion Policy、ACT 输出关节 q
 
 现在 `inference.cli` 支持两个 xArm 配置：

@@ -28,7 +28,8 @@ class JointObservation:
 
 
 def state_time(state):
-    return int(state.q_acquired_timestamp_us or state.acquired_timestamp_us or state.timestamp_us)
+    return int(getattr(state, "observation_timestamp_us", 0) or state.q_acquired_timestamp_us
+               or state.acquired_timestamp_us or state.timestamp_us)
 
 
 class StateReader:
@@ -273,6 +274,11 @@ class JointInferenceRuntime:
                 raise RuntimeError("Policy target expired during xArm enable")
             for side in self.config.active_arms:
                 self.references[side].initialize(histories[side][-1].q)
+            # Enabling can wait for SDK reports; select the target at send time.
+            index = min(int(max(0., time.monotonic() - self.plan_started) / self.plan.step_s),
+                        len(self.plan.values) - 1)
+            target = self.plan.values[index]
+            self.last_target = target.copy()
         commands = {}
         for i, side in enumerate(self.config.active_arms):
             actual = histories[side][-1].q
@@ -303,6 +309,9 @@ class JointInferenceRuntime:
         self.observations.clear()
         self._stop_motion()
 
+    def _connect_arm(self, arm):
+        arm.connect()
+
     def run(self, duration=None, *, read_key=None, single_step=False):
         paused, one_chunk, submitted_once = bool(single_step), False, False
         in_flight, next_plan, latest_window = False, None, None
@@ -315,7 +324,7 @@ class JointInferenceRuntime:
             self.cameras.start()
             for side, arm in self.arms.items():
                 self.connected.append(side)
-                arm.connect()
+                self._connect_arm(arm)
                 self.readers[side].thread.start()
             self.worker.thread.start()
             started = previous = next_tick = active_started = time.monotonic()

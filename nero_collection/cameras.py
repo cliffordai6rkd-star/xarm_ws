@@ -850,7 +850,7 @@ class RealSenseCamera(CameraSource):
             timestamp_us = self._timestamp_offset_us + int(float(frames.get_timestamp()) * 1000.0)
             if timestamp_us <= self._delivered_timestamp_us:
                 return None
-            rgb = np.asanyarray(color.get_data()).copy()
+            rgb = _crop_camera_frame(np.asanyarray(color.get_data()), self.config).copy()
             policy = _resize_rgb(rgb, self.config.output_size)
             preview = _resize_rgb(rgb, self.config.preview_output_size)
             depth = None
@@ -861,7 +861,7 @@ class RealSenseCamera(CameraSource):
                     # enabled; a partial pair cannot be represented safely in
                     # the episode format.
                     return None
-                depth = np.asanyarray(depth_frame.get_data()).copy()
+                depth = _crop_camera_frame(np.asanyarray(depth_frame.get_data()), self.config).copy()
                 depth = _resize_depth(depth, self.config.output_size)
             self._delivered_timestamp_us = timestamp_us
             return CameraFrame(
@@ -1435,6 +1435,21 @@ def _configure_pyav_decoder(stream) -> None:
     codec_context.thread_type = "NONE"
 
 
+def _crop_camera_frame(frame: np.ndarray, config: CameraConfig) -> np.ndarray:
+    """Apply the same checked crop to RGB, previews and aligned depth."""
+    height, width = frame.shape[:2]
+    y0, y1, x0, x1 = config.crop
+    y0 = 0 if y0 is None else y0
+    y1 = height if y1 is None else y1
+    x0 = 0 if x0 is None else x0
+    x1 = width if x1 is None else x1
+    if not (0 <= y0 < y1 <= height and 0 <= x0 < x1 <= width):
+        raise RuntimeError(
+            f"camera {config.name} crop {config.crop} is outside frame {width}x{height}"
+        )
+    return frame[y0:y1, x0:x1]
+
+
 def _prepare_v4l2_frames(
     frame: np.ndarray,
     config: CameraConfig,
@@ -1455,17 +1470,7 @@ def _prepare_v4l2_frames(
         raise RuntimeError(
             f"V4L2 camera {config.name} returned unsupported frame shape {frame.shape}"
         )
-    height, width = frame.shape[:2]
-    y0, y1, x0, x1 = config.crop
-    y0 = 0 if y0 is None else y0
-    y1 = height if y1 is None else y1
-    x0 = 0 if x0 is None else x0
-    x1 = width if x1 is None else x1
-    if not (0 <= y0 < y1 <= height and 0 <= x0 < x1 <= width):
-        raise RuntimeError(
-            f"camera {config.name} crop {config.crop} is outside frame {width}x{height}"
-        )
-    cropped = frame[y0:y1, x0:x1]
+    cropped = _crop_camera_frame(frame, config)
     preview = cropped if include_preview else None
     if include_preview and config.preview_output_size is not None:
         preview_width, preview_height = config.preview_output_size
