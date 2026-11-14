@@ -312,7 +312,7 @@ class MujocoKinematicFK:
         )
 
 
-def load_kinematic_model(mujoco: Any, path: Any) -> Any:
+def load_kinematic_model(mujoco: Any, path: Any, *, balance_inertia: bool = True) -> Any:
     """Accept MJCF or the deployment URDF, retaining fixed flange/TCP frames."""
     path = Path(path).expanduser().resolve()
     if path.suffix.lower() != '.urdf':
@@ -351,7 +351,12 @@ def load_kinematic_model(mujoco: Any, path: Any) -> Any:
     compiler = extension.find('compiler')
     if compiler is None:
         compiler = ET.SubElement(extension, 'compiler')
-    compiler.attrib.update(fusestatic='false', discardvisual='false', balanceinertia='true')
+    compiler.attrib.update(fusestatic='false', discardvisual='false',
+                          balanceinertia='true' if balance_inertia else 'false')
+    if not balance_inertia:
+        # Dynamics validation must use the supplied inertias without repair
+        # or replacement by mesh-derived inertias.
+        compiler.set('inertiafromgeom', 'false')
     return mujoco.MjModel.from_xml_string(ET.tostring(root, encoding='unicode'), assets=assets)
 
 

@@ -1,0 +1,9 @@
+# Local ForceVLA client only: no torch/JAX/model checkout required.
+-r requirements-xarm.txt
+websockets>=15,<16
+msgpack>=1.0
+Pillow>=9.1
+xArm-Python-SDK>=1.14
+pin>=3,<4
+opencv-python>=4.8
+pyrealsense2

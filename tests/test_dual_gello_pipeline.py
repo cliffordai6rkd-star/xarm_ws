@@ -684,6 +684,27 @@ def test_automatic_alignment_accepts_only_when_every_sample_passes(capsys):
     assert '微调' not in output and '等待对齐' not in output
 
 
+def test_automatic_alignment_retries_after_failed_batch_until_success():
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    pipeline = DualGelloPipeline.__new__(DualGelloPipeline)
+    pipeline.alignment = {'alignment_tolerance_rad': .05, 'alignment_samples': 2}
+    pipeline.alignment_target_q = [np.zeros(7)]
+    pipeline.readers = []
+    pipeline.stop_alignment_damping_workers = Mock()
+    pipeline.align_gello_to_xarm = Mock()
+    pipeline._consume_samples = Mock()
+    bad = {'right': np.array([0., 0., .1, 0., 0., 0., 0.])}
+    good = {'right': np.zeros(7)}
+    pipeline.reference_error_report = Mock(side_effect=[bad, good, good])
+    pipeline.confirm_alignment = Mock()
+    pipeline.wait_for_alignment(SimpleNamespace(read_key=Mock(return_value=None)))
+    pipeline.stop_alignment_damping_workers.assert_called_once()
+    assert pipeline.align_gello_to_xarm.call_count == 1
+    assert pipeline.align_gello_to_xarm.call_args.args[0] is pipeline.alignment_target_q
+    pipeline.confirm_alignment.assert_called_once()
+
+
 @pytest.mark.parametrize('passing_samples', [0, 1])
 def test_automatic_alignment_stops_on_first_bad_sample_without_retry(passing_samples):
     from types import SimpleNamespace
@@ -729,7 +750,10 @@ def test_automatic_alignment_rejects_nonfinite_feedback(device):
             pipeline.readers[0].raw[0] = np.nan
         else:
             pipeline.arms[0].q[0] = np.nan
-        with pytest.raises(RuntimeError, match='采样无效'):
+        # The hardware path now retries forever; emulate Ctrl+C to terminate
+        # the retry loop deterministically in this fault-injection test.
+        pipeline._retry_alignment_until_started = Mock(side_effect=KeyboardInterrupt)
+        with pytest.raises(KeyboardInterrupt):
             pipeline.wait_for_alignment(SimpleNamespace(read_key=Mock(return_value=None)))
         assert pipeline.state == 'aligning' and pipeline.control_thread is None
         assert all(not arm.commands for arm in pipeline.arms)
@@ -761,8 +785,9 @@ def test_startup_and_t_refuse_takeover_when_interpolation_misses_alignment(entry
                     read.raw[0] += np.deg2rad(7)
             reader.command_alignment_positions = Mock(side_effect=command)
         pipeline.takeover = Mock(wraps=pipeline.takeover)
+        pipeline._retry_alignment_until_started = Mock(side_effect=KeyboardInterrupt)
         keys = SimpleNamespace(is_tty=True, read_key=Mock(return_value=None))
-        with pytest.raises(RuntimeError, match='自动对齐失败.*left J1='):
+        with pytest.raises(KeyboardInterrupt):
             if entry == 'startup':
                 context = Mock()
                 context.__enter__ = Mock(return_value=keys)

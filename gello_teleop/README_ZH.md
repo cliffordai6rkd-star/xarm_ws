@@ -441,8 +441,9 @@ python -m gello_teleop.dual_gello_collect \
 `leader_reference_q` 的 calibrated GELLO 文件。没有保存标定时入口会在连接前拒绝，
 不会用当前摆放姿态重新计算 offset。实际顺序固定为：连接检查、两台 xArm 低速到
 `reset_q`、GELLO 电流位置插值对齐、恢复阻尼并自动采样核对、全部通过后接管。
-取消人手微调等待：`alignment_samples` 指定核对次数，任一次误差超过
-`alignment_tolerance_rad` 或采样失败都立即报错停止接管。
+取消人手微调等待：`alignment_samples` 指定每轮核对次数；任一次误差超过
+`alignment_tolerance_rad` 或采样失败时会自动重新执行 GELLO 插值对齐并继续重试，
+直到整轮通过。启动阶段可随时按 `Ctrl+C` 退出并走安全复位保持流程。
 终端 `r` 开始新的 episode，Enter 或空格结束本集采样并提示输入 `y/n`：
 `y` 保存、`n` 丢弃当前 episode，大小写均可。等待确认时遥操继续，
 输入 `y/n` 即生效，无需再次按 Enter；`F/o/t/q` 仍可使用。
@@ -539,6 +540,32 @@ python -m gello_teleop.dual_gello_collect \
 所有相机独立按 `cameras` 配置连接并保存，`enabled: false` 关闭对应相机，
 `visualize: true/false` 控制该相机预览。名称 `left wrist`、`right wrist` 和
 兼容字段 `arm: left/right` 都不会按机械臂选择过滤相机。
+
+### 原始分辨率观测录制
+
+原 `dual_gello_collect.py` 保持不变。需要保存 RealSense 原生分辨率观测时使用
+独立入口 `dual_gello_collect_raw_obs.py`；它复用同一套 pipeline、键盘操作
+（`r` / Enter / `y/n` / `F/o/t/q`）和 H5 结构，只把启用相机的录制分辨率从
+`output_size` 覆盖为原生 `width × height`，默认保留相机全部采集帧，并写入
+独立输出目录：
+
+```bash
+python -m gello_teleop.dual_gello_collect_raw_obs \
+  -c gello_teleop/config/xarm7_gello_dual_dataset.yaml \
+  --output-dir 3cam_data/h5_raw/cut_cucumber
+```
+
+- `--raw-fps 25`：按采集时间戳抽帧；省略时保留原生帧率（当前 30 fps）。
+- `--compression lzf|gzip|none`：H5 相机压缩；`keep`（默认）沿用 YAML。
+- `--check-config`：只打印原生分辨率、录制帧率和输出目录，不连接硬件。
+- `--left/--right/--both`、`--torque-plot`、`--force-feedback`、
+  `--auto-save`、`--reset-q` 与原入口一致。
+- 默认输出目录为 `3cam_data/h5_raw/<配置文件名>`，可用 `--output-dir` 覆盖。
+
+原生 640×480 RGB（开启深度时另含 uint16 深度帧）的数据量约为 224×224
+策略尺寸的 7 倍；长时间 episode 建议启用 `--compression lzf` 或 `gzip`，
+或缩短单集。H5 的 `config_yaml` 记录实际生效的分辨率、抽帧和输出目录。
+
 GELLO 底层串口断连会报出侧别、串口路径、电机 ID 和操作，停止当次采集。
 
 启动位置保持或电流阻尼前会识别舵机型号。仅在型号 `ping` 遇到

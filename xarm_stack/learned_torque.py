@@ -87,7 +87,8 @@ class LearnedTorqueModel:
         self.data = self.physics.createData()
         self.sos = butter(4, 5, fs=100, output='sos')
 
-    def predict(self, times, q, dq, q_cmd, tau, *, output_times=None, grid_origin=None):
+    def predict(self, times, q, dq, q_cmd, tau, *, output_times=None, grid_origin=None,
+                include_states=False):
         """One uninterrupted segment; optional sparse outputs reduce live CPU cost."""
         import pinocchio as pin
         import torch
@@ -147,8 +148,17 @@ class LearnedTorqueModel:
         pred += np.asarray(prior, dtype=np.float32)
         free100 = np.stack([np.interp(target-origin, grid[indices], pred[:, j]) for j in range(7)], axis=1)
         tau100 = np.stack([np.interp(target-origin, grid, measured[:, j]) for j in range(7)], axis=1)
-        return dict(timestamp_s=target.copy(), tau_free=free100, tau_measured=tau100, tau_ext=tau100-free100,
-                    valid_context=(target >= times[0]+1.) & (target <= times[-1]-1.))
+        result = dict(timestamp_s=target.copy(), tau_free=free100, tau_measured=tau100,
+                      tau_ext=tau100-free100,
+                      valid_context=(target >= times[0]+1.) & (target <= times[-1]-1.))
+        if include_states:
+            # Validation must use the exact filtered states underlying this
+            # experiment, rather than a different derivative/filter pipeline.
+            for key, value in (('q_filtered', q64), ('dq_filtered', dq64),
+                               ('ddq_filtered', ddq)):
+                result[key] = np.stack([
+                    np.interp(target-origin, grid, value[:, j]) for j in range(7)], axis=1)
+        return result
 
 
 class DelayedTorqueStream:

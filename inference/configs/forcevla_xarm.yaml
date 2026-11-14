@@ -1,0 +1,77 @@
+# 所有本地/服务器参数集中于此；路径相对于此 YAML。
+server:
+  host: "100.97.6.30"  # 100.x.y.z 或 MagicDNS 主机名；无需公网端口
+  port: 8000
+  connect_timeout_s: 30  # Tailscale 走 DERP 中继时建连较慢，10 s 偶发超时
+  request_timeout_s: 600  # 首次 JAX 编译可能数分钟；稳定后可改回 120
+  startup_timeout_s: 300
+  autostart: false  # true：脚本通过 SSH 启动下述现有 server；false：连接已启动的 server
+  repo_path: /absolute/path/to/forcvla_tauext
+  checkpoint: /absolute/path/to/checkpoints/pi0_force_lora_board/experiment/step
+  python_command: [uv, run]  # 或 [/absolute/path/to/remote/env/bin/python]
+  ssh:
+    user: "YOUR_SERVER_USER"
+    host: null  # 默认复用 server.host；也可填写 ~/.ssh/config 中的 Host
+    port: 22
+    identity_file: null  # 使用已有 SSH key / agent；支持 Tailscale SSH
+
+policy:
+  training_config: pi0_force_lora_board  # 或 pi0_force_lora_huanggua；必须对应服务端 checkpoint
+  prompt: "Wipe the board."
+  action_rate_hz: 25  # 训练数据 FPS；server 的空 metadata 不提供此信息
+  execute_steps: 10  # 每次返回 50 帧，跳过传输/预取等待期间已过期的动作，再执行最多 10 帧
+  image_size: [224, 224]  # RGB uint8，传输前按 OpenPI 方式 resize+pad
+
+hardware_config: ../../gello_teleop/config/xarm7_gello_dual_dataset.yaml
+arm: right  # 每个策略控制一个 xArm7；复用硬件配置中的 IP，不连接 GELLO
+arm_options: {}  # 可覆盖 robot_ip、sdk_timeout_s 等；q/dq/tau 强制使用实测反馈
+
+# 覆盖 hardware_config.cameras；必须使用训练时的真实视角与裁剪方式。
+# 序列号沿用本仓库已有配置，请按现场设备核对。
+cameras:
+  - name: front
+    backend: realsense
+    serial_number: "262722072129"
+    width: 640
+    height: 480
+    fps: 30
+    output_size: [224, 224]  # 与本仓库数采预处理一致；null 保留原比例后在发送前补边
+    depth: false
+    visualize: false
+  - name: right_wrist
+    backend: realsense
+    serial_number: "419122271564"
+    width: 640
+    height: 480
+    fps: 30
+    output_size: [224, 224]
+    depth: false
+    visualize: false
+
+observation:
+  camera_map:
+    image: front
+    right_wrist_image: right_wrist
+    # 不要映射 wrist_image：服务端会用训练配置自动补左腕并设 mask=False
+  maximum_camera_age_s: 0.3
+  maximum_camera_skew_s: 0.06
+  maximum_state_age_s: 0.15
+  maximum_alignment_gap_s: 0.1
+
+tau_ext:
+  # 必须对应 checkpoint 实际训练数据。远端当前 board 配置使用 clean（1 帧、14 Nm）。
+  processing_record: tau_ext_dp_hirol_clean.json
+  # 新 ma5 数据训练的 checkpoint 改用 tau_ext_dp_hirol_ma5_l1_12p5.json（5 帧、12.5 Nm）。
+  # 也可直接填训练数据集 meta/tau_ext_processing.json 的本机路径。
+  urdf_path: ../../gello_teleop/models/xarm7_dynamics.urdf
+  max_gap_s: 0.15  # 反馈中断后停止；滤波、负载、符号、均值和门控均读取训练处理记录
+
+execution:
+  enable_command: false  # 改为 true 后直接运行脚本即可执行；--dry-run 临时覆盖
+  control_hz: 100
+  startup_timeout_s: 150
+  maximum_prediction_age_s: 2.0  # 从本地观测时间计龄，超过后停止；不依赖服务端时钟
+  # 位置限速/加速度/单步/跟踪误差默认沿用 hardware_config.control。
+  # position_reference:
+  #   max_velocity_rad_s: 1.0
+  #   max_acceleration_rad_s2: 2.0

@@ -12,6 +12,7 @@ torque_visualization:
   window_s: 30.0
   update_hz: 10.0
   stale_s: 0.15
+  startup_timeout_s: 60.0  # 首次启动需导入 torch/加载 BiLSTM 并创建 GUI；冷启动可能超过 15 s
   learned_torque:
     enabled: true
     sides: [right]  # 当前模型按右臂验证；与现有 URDF 曲线并排显示
@@ -166,6 +167,7 @@ cameras:
   depth: false
   visualize: true  # 所有启用的视角拼接到同一个预览窗口
 - name: "left_wrist"
+  enabled: false
   backend: realsense
   serial_number: '419122270270'
   width: 640
@@ -177,7 +179,7 @@ cameras:
   visualize: true
 output:
   camera_compression: null  # 缩放后的原始数组直接写 H5，不做 gzip/视频编码
-  directory: ../../3cam_data/h5/cut_cucumber_25hz_3cam
+  directory: ../../3cam_data/h5/huanggua1103
   prefix: dual_gello_xarm
   discard_initial_s: 0.0
 gello_template: xarm7_gello_teleop_dual.yaml

@@ -779,7 +779,8 @@ class DualGelloPipeline:
         if self.state != "connected":
             raise RuntimeError("selected arms must pass connection check before reset")
         self.reset_followers(keys)
-        self.align_gello_to_xarm([np.asarray(robot.reset_q) for _, robot, _ in self.configs], keys=keys)
+        self.alignment_target_q = [np.asarray(robot.reset_q) for _, robot, _ in self.configs]
+        self._retry_alignment_until_started(keys, 0)
 
     def reset_followers(self, keys=None, *, enable=True, consume_samples=True, abort=None):
         """Planned xArm reset; never touches GELLO or the recording flag."""
@@ -993,43 +994,94 @@ class DualGelloPipeline:
         return report
 
     def wait_for_alignment(self, keys=None):
-        """Check a fixed batch of fresh reads; never wait for manual correction."""
+        """Keep re-aligning until a complete fresh batch passes the gate.
+
+        A leader can drift after the interpolated position hold is released
+        (most visibly on a gravity-loaded wrist joint).  Treat that as a
+        recoverable startup condition: stop the temporary alignment workers,
+        interpolate the leader to the saved reference again, and repeat the
+        validation batch.  Ctrl+C still escapes immediately to the normal
+        shutdown/reset path.
+        """
         tolerance = float(self.alignment.get('alignment_tolerance_rad', .05))
         required = int(self.alignment.get('alignment_samples', 5))
-        print(f'自动对齐核对：采样 {required} 次；误差超限或采样失败立即停止接管；q 退出。', flush=True)
-        try:
-            for sample_index in range(required):
-                self._consume_samples()
-                try:
-                    report = self.reference_error_report()
-                except Exception as exc:
-                    raise RuntimeError(f'自动对齐采样失败（{sample_index+1}/{required}）：{exc}') from exc
-                bad = {side: error for side, error in report.items()
-                       if not np.isfinite(error).all() or np.any(np.abs(error) > tolerance)}
-                values = ' | '.join(side+': ['+', '.join(f'{v:+.1f}' for v in np.rad2deg(error))+']'
-                                    for side, error in report.items())
-                status = '对齐失败' if bad else f'自动采样 {sample_index+1}/{required}'
-                sys.stdout.write(f'\r\033[2K误差° J1..J7 | {values} | 阈值 {np.rad2deg(tolerance):.2f}° | {status}')
-                sys.stdout.flush()
-                if bad:
-                    details = '; '.join(f'{side} J{axis+1}={np.rad2deg(error[axis]):+.2f}°'
-                                        for side, error in bad.items()
-                                        for axis in np.flatnonzero(~np.isfinite(error) | (np.abs(error) > tolerance)))
-                    raise RuntimeError(f'自动对齐失败（采样 {sample_index+1}/{required}，'
-                                       f'阈值 {np.rad2deg(tolerance):.2f}°）：{details}；停止接管')
-                delay = 0. if sample_index+1 == required else .1
+        print(f'自动对齐核对：采样 {required} 次；失败后自动重新对齐，Ctrl+C 退出。', flush=True)
+        retry = 0
+        while True:
+            try:
+                for sample_index in range(required):
+                    self._consume_samples()
+                    try:
+                        report = self.reference_error_report()
+                    except Exception as exc:
+                        raise RuntimeError(f'自动对齐采样失败（{sample_index+1}/{required}）：{exc}') from exc
+                    bad = {side: error for side, error in report.items()
+                           if not np.isfinite(error).all() or np.any(np.abs(error) > tolerance)}
+                    values = ' | '.join(side+': ['+', '.join(f'{v:+.1f}' for v in np.rad2deg(error))+']'
+                                        for side, error in report.items())
+                    status = '对齐失败' if bad else f'自动采样 {sample_index+1}/{required}'
+                    sys.stdout.write(f'\r\033[2K误差° J1..J7 | {values} | 阈值 {np.rad2deg(tolerance):.2f}° | {status}')
+                    sys.stdout.flush()
+                    if bad:
+                        details = '; '.join(f'{side} J{axis+1}={np.rad2deg(error[axis]):+.2f}°'
+                                            for side, error in bad.items()
+                                            for axis in np.flatnonzero(~np.isfinite(error) | (np.abs(error) > tolerance)))
+                        raise RuntimeError(f'自动对齐失败（采样 {sample_index+1}/{required}，'
+                                           f'阈值 {np.rad2deg(tolerance):.2f}°）：{details}')
+                    delay = 0. if sample_index+1 == required else .1
+                    if keys is None:
+                        time.sleep(delay)
+                        key = None
+                    else:
+                        key = self._transition_key(keys, delay)
+                    if key in {'q', 'Q', '\x03'}:
+                        raise KeyboardInterrupt
+                # Recheck current actual follower positions before takeover.
+                self.confirm_alignment()
+                print('\n自动对齐核对通过，准备接管。', end='', flush=True)
+                return
+            except KeyboardInterrupt:
+                raise
+            except Exception as exc:
+                # Keep the method useful for lightweight/offline callers that
+                # only exercise the validation gate without a connected
+                # pipeline.  The hardware pipeline always has these fields.
+                if not hasattr(self, 'alignment_target_q') or not hasattr(self, 'readers'):
+                    raise
+                retry += 1
+                print(f'\n自动对齐未通过（第 {retry} 次）：{exc}', flush=True)
+                self._retry_alignment_until_started(keys, retry)
+
+    def _retry_alignment_until_started(self, keys, retry):
+        """Restart the leader interpolation, retrying until it can begin."""
+        self.stop_alignment_damping_workers()
+        for reader in self.readers:
+            try:
+                reader.set_torque(False, ids=list(reader.config.joint_ids))
+            except Exception:
+                pass
+        self.alignment_hold_active = False
+        action = '执行' if retry == 0 else '重新执行'
+        print(f'{action} GELLO 插值对齐（第 {retry} 次）；Ctrl+C 退出。', flush=True)
+        while True:
+            # align_gello_to_xarm switches to 'aligning' before it can fail
+            # (current hold, reset plan, interpolation tracking). Restore the
+            # precondition on every attempt so the retry prints the real error
+            # instead of a stale-state guard.
+            self.state = 'connected'
+            try:
+                self.align_gello_to_xarm(self.alignment_target_q, keys=keys)
+                return
+            except KeyboardInterrupt:
+                raise
+            except Exception as exc:
+                print(f'本次插值对齐未开始：{exc}；继续重试，Ctrl+C 退出。', flush=True)
                 if keys is None:
-                    time.sleep(delay)
-                    key = None
+                    time.sleep(.5)
                 else:
-                    key = self._transition_key(keys, delay)
-                if key in {'q', 'Q', '\x03'}:
-                    raise KeyboardInterrupt
-            # Recheck current actual follower positions before takeover.
-            self.confirm_alignment()
-            print('\n自动对齐核对通过，准备接管。', end='', flush=True)
-        finally:
-            print(flush=True)
+                    key = keys.read_key(.5)
+                    if key in {'q', 'Q', '\x03'}:
+                        raise KeyboardInterrupt
 
     def takeover(self, keys=None):
         if self.state not in {"aligned", "holding"}:

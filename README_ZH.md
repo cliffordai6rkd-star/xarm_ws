@@ -199,6 +199,124 @@ python -m xarm_stack.test_joint_current \
   、、、
 默认不运动；需要当前位置保持时增加 --hold，并将对应 execution_enabled 改为 true。运行中 b/p/l 标记 baseline、press、release。
 
+URDF 动力学离线验证使用 `xarm_stack.validate_urdf`，只读取 H5，不连接机械臂。
+入口读取右臂有效的实测 `q/dq/tau`，使用反馈来源时间戳去掉重复报告，
+按无效样本和时间间隙分段，在各段内重采样并用相同的 Savitzky–Golay 窗口平滑，
+从速度独立求导得到加速度；滤波边缘不计入误差统计。
+Pinocchio 与 MuJoCo 从相同的 URDF、状态、力矩计算正向动力学，
+另将速度求导得到的加速度用于逆动力学力矩对比。
+
+```bash
+conda activate gello
+# 先分析目录排序后的第一集，保存七轴曲线、NPZ 和 JSON。
+python -m xarm_stack.validate_urdf runs/cotrain/peel_cucumber
+# 分析全部集；七轴曲线和 NPZ 保存第一集，JSON 包含所有集和加权汇总。
+python -m xarm_stack.validate_urdf runs/cotrain/peel_cucumber \
+  --limit 0 --output runs/urdf_validation/cotrain_g2_all
+# MuJoCo 实测回放 + 半透明蓝色力矩仿真。每 100 ms 重置预测，窗口内独立积分。
+python -m xarm_stack.validate_urdf runs/cotrain/peel_cucumber --viewer
+# 无窗口的 MuJoCo 姿态对比图；EGL 环境需要可用的图形驱动。
+MUJOCO_GL=egl python -m xarm_stack.validate_urdf \
+  runs/cotrain/peel_cucumber --render
+```
+
+默认使用 `gello_teleop/models/xarm7_dynamics_g2.urdf`，不额外添加负载，
+关闭 MuJoCo 接触/关节限位约束和自动惯性修复。默认不启用尚未标定的摩擦；
+`--friction urdf` 在两个引擎中显式使用相同的粘性＋平滑库仑摩擦模型。
+`--urdf` 可选择裸臂或其他七轴模型。`--window-s` 默认 0.11 s，
+用于离线零相位平滑，不能据此推断实时性能。
+
+削皮数据的接触状态默认标为未知。低速片段不被当作无接触片段。
+对单个 H5 文件，只有在人工确认无接触区间后才使用
+`--free-space 起始秒 结束秒`，时间从该文件第一条反馈开始计算。
+这项统计单独列出，不改变全记录结果。不能把模型估算的外力矩扣掉后再验证同一模型，
+也不能用主机虚拟 MIT 力矩代替上报关节力矩。
+结果包含外部接触、未标定摩擦、实际工具负载及力矩上报误差；
+两引擎一致只能验证模型转换与计算一致，不能证明实机 URDF 准确。
+
+对于人工确认整集无外部接触、末端只有 G2 的记录，可以明确标注假设，
+并用 `--arm left/right` 分别选择旧格式 H5 的前/后七列及每臂来源时间戳：
+
+```bash
+python -m xarm_stack.validate_urdf \
+  runs/test_data/bg_data/dual_gello_xarm_0001_20260930_211754.h5 \
+  --arm right --no-contact --tool-configuration g2_only \
+  --output runs/urdf_validation/bg0001_right_g2
+```
+
+`--no-contact` 记录人工确认，不从动力学残差推断接触。
+`--tool-configuration` 仅记录实际末端配置，不改所选 URDF 的质量和惯性。
+报告另列静止样本（七轴速度均小于 0.01 rad/s、加速度均小于 0.1 rad/s²）、
+运动样本、实测加速度 RMS 和位置求导与记录速度的一致性。
+`--render --render-time 100` 保存 100 s 之后约 100 ms 独立积分的姿态对比；
+`--viewer` 回放完整所选集。长记录可先用 JSON 指标和静态图评估，
+避免仅凭位置回放动画判断动力学准确。
+
+若要检查“记录速度求导得到 ddq → URDF 逆动力学 tau → MIT → 动力学反算 ddq”，
+在上述命令中加入 `--roundtrip`。此路径用 `Kp=Kd=0`、`t_ff=tau_model`，
+不另加重力、不限幅，输出 `model_tau_roundtrip.png` 和 JSON 中的
+`model_tau_roundtrip` 指标；NPZ 包含两种反算加速度及实际 MIT 输入力矩。
+原来的 `Acceleration RMSE` 仍表示记录力矩作为输入的独立对比，
+新增控制台行 `Model-tau roundtrip ... RMSE` 才表示同模型逆算/反算的误差。
+同一个有效 URDF 的逆动力学与正向动力学在数学上互相抵消，
+因此此指标接近零只验证计算一致性，不能证明质量、质心和惯性符合真机。
+
+已有实验模型的力矩输出使用独立入口，避免与 `tau_model` 混淆：
+
+```bash
+python -m xarm_stack.validate_learned_tau \
+  runs/test_data/bg_data/dual_gello_xarm_0001_20260930_211754.h5 \
+  --no-contact --output runs/urdf_validation/bg0001_right_experimental_tau
+```
+
+默认读取 `model/tau_offline/residual_bilstm_zero5_50/model.pt`，
+在所选 H5 上用冻结的实验模型重新预测 `tau_free`，不使用别集的旧 NPZ。
+按实验原来的 100 Hz → 零相位 5 Hz → 50 Hz 流程处理状态，
+从同一滤波速度求导得到 ddq，在原生 50 Hz 网格上比较。
+输出是模型预测的总关节力矩，MIT 仅回放该力矩（Kp=Kd=0、t_ff=tau_free），
+没有用当前待验证 URDF 的逆动力学力矩替换实验输出。
+JSON 分别记录预测力矩与实测力矩的误差、预测力矩反算加速度的误差、
+以及预测误差对反算结果的贡献。`--checkpoint` 可换兼容的已导出实验模型。
+默认实验的辨识先验为右臂，本入口只验证右臂。
+`--viewer` 打开 MuJoCo 回放；`--render --render-time 100` 保存短时预测姿态对比图。
+零相位处理及双向网络使用未来上下文，这些是离线对比结果。
+
+入口会读取实验档案的划分，标明训练重放或原验证集。
+默认模型的 0001 左右臂参与训练，0002 右臂是档案验证集；
+001 的预测结果不能当作独立数据上的泛化精度。
+实验模型自身包含 URDF 辨识先验和学习残差，模型误差、摩擦和驱动动力学
+都会影响反算结果，仍不能仅凭该复合对比认证 URDF 的真实惯性参数。
+
+直接用记录力矩验证位置增量，使用 `xarm_stack.validate_torque_replay`：
+
+```bash
+python -m xarm_stack.validate_torque_replay \
+  runs/test_data/bg_data/dual_gello_xarm_0001_20260930_211754.h5 \
+  --output runs/urdf_validation/bg0001_recorded_torque_q_raw
+# 可选噪声敏感性对照：只滤波输入力矩，q/dq 参考保持原样。
+python -m xarm_stack.validate_torque_replay \
+  runs/test_data/bg_data/dual_gello_xarm_0001_20260930_211754.h5 \
+  --torque-cutoff-hz 5 --output runs/urdf_validation/bg0001_recorded_torque_q_lowpass5
+```
+
+本入口从 H5 读取 `tau`，以记录 `q/dq` 为单步起始状态，计算
+`a=solve(M(q),tau-h(q,dq)-friction)`，再以实际反馈间隔 `dt` 计算
+`delta_q=dq*dt+0.5*a*dt²`、`q_next=q+delta_q`，与记录的下一步 q 比较。
+并用 MuJoCo 每 1 ms 重算动力学、积分同一段记录力矩。
+不使用实验预测力矩、不生成逆动力学输入力矩，也不对 q/dq 求导生成参考加速度。
+必须保留起始速度贡献 `dq*dt`，不能只积分加速度项。
+
+单步对比每次从记录状态初始化；JSON 同时给出仅保留起始速度的基线，
+以及默认约 100 ms 的多步独立积分误差，多步窗口内不覆盖仿真 q/dq。
+图使用中文说明，单步图左列直接叠加数据 q 和 URDF 积分 q，右列显示两者差值。
+`j7_direct_q_comparison.png` 是 J7 的一秒放大对照，
+`q_direct_comparison.csv` 每行保存同一时刻七轴的数据 q、URDF 反推 q 和差值。
+另提供单个连续积分窗口图。
+所有角度误差按未折叠的关节角统计，整圈转动误差不按 2π 消除。
+`--physics-dt-s` 可检查数值积分步长，`--friction urdf` 是未标定摩擦的显式对照。
+关节限位、碰撞约束及驱动惯量默认关闭，以检查所声明的刚体模型；
+结论仍取决于上报力矩是否能解释为实际驱动力矩以及驱动/摩擦参数是否完整。
+
 H5 离线回看使用 `scripts/browse_h5_rerun.py`，支持 `dual_gello_xarm_NNNN_*.h5`
 和旧 `episode_NNNN_*.h5` 文件名。当前机器的 `gello` 环境已安装 Rerun 0.26.2 和 Pinocchio：
 
@@ -263,3 +381,14 @@ python scripts/visualize_h5_rerun.py \
 ```
 
 直接查看命令也接受 `--urdf /path/to/model.urdf`，用于指定离线估算模型。
+
+conda activate gello
+cd /home/eid/code/xarm_ws
+
+# 可选：只做配置/标定完整性检查，不连接硬件
+python -m gello_teleop.dual_gello_collect \
+  -c gello_teleop/config/xarm7_gello_dual_dataset.yaml --check-config
+
+# 正式数采
+python -m gello_teleop.dual_gello_collect \
+  -c gello_teleop/config/xarm7_gello_dual_dataset.yaml

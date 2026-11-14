@@ -62,7 +62,8 @@ class FirstOrderLowPass:
 
 def plot_config(raw, config_path, active_sides):
     cfg = dict(raw)
-    for key, default in [('window_s', 30.), ('update_hz', 10.), ('stale_s', .15)]:
+    for key, default in [('window_s', 30.), ('update_hz', 10.), ('stale_s', .15),
+                         ('startup_timeout_s', 15.)]:
         value = float(cfg.get(key, default))
         if not np.isfinite(value) or value <= 0:
             raise ValueError(f'torque_visualization.{key} must be positive')
@@ -578,11 +579,12 @@ class TorqueVisualizer:
         parent, child = context.Pipe(duplex=False)
         self.process = context.Process(target=_plot_worker, args=(self.cfg, self.samples, self.stop, child),
                                        name='xarm-torque-plot', daemon=True)
+        timeout = float(self.cfg.get('startup_timeout_s', 15.))
         try:
             self.process.start()
             child.close()
-            if not parent.poll(15.):
-                raise RuntimeError('Torque plot startup timed out')
+            if not parent.poll(timeout):
+                raise RuntimeError(f'Torque plot startup timed out after {timeout:g} s')
             error = parent.recv()
             if error is not None:
                 raise RuntimeError(error)

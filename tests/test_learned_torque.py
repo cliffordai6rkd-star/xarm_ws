@@ -57,6 +57,21 @@ def test_measurement_only_changes_residual_and_commands_are_network_inputs(netwo
     assert np.max(np.abs(command['tau_free']-r['tau_free'])) > .01
 
 
+def test_prediction_exports_exact_experiment_states_without_changing_tau(network):
+    e = trajectory(4.)
+    args = [e[k] for k in ('t', 'q', 'dq', 'q_cmd', 'tau')]
+    targets = np.arange(0., 4., .02)
+    ordinary = network.predict(*args, output_times=targets)
+    detailed = network.predict(*args, output_times=targets, include_states=True)
+    np.testing.assert_array_equal(detailed['tau_free'], ordinary['tau_free'])
+    valid = detailed['valid_context']
+    assert valid.any()
+    # Native-grid ddq is exactly the experiment's finite-differenced,
+    # filtered velocity used by its identified dynamics prior.
+    expected = np.gradient(detailed['dq_filtered'], .02, axis=0)
+    np.testing.assert_allclose(detailed['ddq_filtered'][valid], expected[valid], atol=1e-10)
+
+
 def test_buffered_prediction_matches_whole_record_with_source_timestamps(network):
     e = trajectory()
     # Exercise epoch timestamps, irregular recorder periods, and rolling crops.

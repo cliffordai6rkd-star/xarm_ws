@@ -1,0 +1,87 @@
+# PI0/WM runtime using the xArm three-service state and RPC endpoints.
+pi0:
+  host: localhost
+  port: 8000
+  prompt: task prompt
+  action_hz: 25
+  consume_steps: 50
+  output_key: actions
+  quaternion_tolerance: 0.15
+  interface:
+    training_config: null
+    state_key: state
+    prompt_key: prompt
+    images: {side: images/side, wrist: images/wrist}
+    state_semantic: observation.ee_pose
+    action_semantic: action.ee_pose
+    # Replace with the frame used by the selected xArm URDF/checkpoint.
+    coordinate_frame: tcp
+    representation: xyz_quaternion
+    quaternion_order: xyzw
+    image_format: uint8_hwc_rgb
+    output_space: physical_absolute
+    action_hz: 25
+wm:
+  coordinate_frame: tcp
+  pinn_root: ../../../PINN
+  checkpoint: ../../../PINN/outputs/checkpoints/latest.pt
+  device: cuda:0
+  use_ema: true
+  num_samples: 1
+  selected_sample: 0
+  flow_steps: 32
+  solver: heun
+control:
+  hz: 100
+  execute_steps: 20
+  maximum_steps: 3000
+  maximum_state_age_s: 0.1
+  maximum_camera_age_s: 0.3
+calibration:
+  warmup_samples: 3
+  minimum_samples: 10
+  wm_seconds: 1.0
+  pi_seconds: 1.0
+  wm_margin_s: 0.02
+  pi_margin_s: 0.08
+  request_timeout_s: 30.0
+hardware:
+  backend: xarm_zmq
+  endpoint:
+    name: xarm
+    config_kwargs:
+      rpc_endpoint: tcp://127.0.0.1:5551
+      state_endpoint: tcp://127.0.0.1:5552
+      dof: 7
+  # Replace with the limits from the actual xArm model/firmware.
+  q_min: [-3.14159265, -3.14159265, -3.14159265, -3.14159265, -3.14159265, -3.14159265, -3.14159265]
+  q_max: [3.14159265, 3.14159265, 3.14159265, 3.14159265, 3.14159265, 3.14159265, 3.14159265]
+  maximum_step_rad: [0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02]
+cameras:
+  - name: side
+    backend: realsense
+    serial_number: REPLACE_D435I_SERIAL
+    depth: false
+    width: 640
+    height: 480
+    fps: 30
+    output_size: [256, 192]
+  - name: wrist
+    backend: realsense
+    serial_number: REPLACE_D405_SERIAL
+    depth: false
+    width: 640
+    height: 480
+    fps: 30
+    output_size: [256, 192]
+mujoco:
+  enabled: false
+  headless: true
+  # Supply a model matching the actual xArm before enabling visualization.
+  mujoco_model_path: null
+  robot_joint_names: []
+  ee_body_name: null
+  ee_site_name: null
+  render_fps: 50
+  prediction_visualization_hz: 100
+  point_size: 0.003
